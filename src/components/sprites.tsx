@@ -1,11 +1,44 @@
 import type { ReactElement } from 'react';
-import type { CatalogueItem } from '../data/catalogue';
+import type { CatalogueItem } from '../adapter/types';
+import { roleOf } from '../engine/traits';
 
 /**
- * Top-down flat vector drawings for every catalogue sprite. Each is drawn in
- * its own box `w` × `h` (in SVG units) with the back edge at the top, y = 0.
- * Wall-mounted sprites straddle that top edge so they sit on the wall line.
+ * Top-down flat vector drawings. Each is drawn in its own box `w` × `h` (in
+ * SVG units) with the back edge at the top, y = 0. Wall-mounted sprites
+ * straddle that top edge so they sit on the wall line.
+ *
+ * The game's catalogue says nothing about looks, so `lookFor` picks a drawing
+ * from what an item is and a palette from its category. Items with no drawing
+ * of their own get a plain labelled block.
  */
+
+export interface Palette {
+  base: string;
+  accent: string;
+  detail?: string;
+}
+
+type SpriteKind =
+  | 'mattress' | 'campbed' | 'bed'
+  | 'plasticchair' | 'sofa' | 'armchair' | 'bench' | 'cushions' | 'officechair'
+  | 'lantern' | 'floorlamp' | 'solar' | 'sconce' | 'bracket'
+  | 'wardrobe' | 'fabricwardrobe' | 'bags' | 'drawers' | 'bookshelf' | 'shoerack' | 'cabinet'
+  | 'centretable' | 'stool' | 'dining'
+  | 'desk' | 'workstation'
+  | 'tvstand' | 'smalltv' | 'speaker' | 'walltv'
+  | 'gen' | 'jerrycan' | 'inverter' | 'meter'
+  | 'fan' | 'ac'
+  | 'cooler' | 'fridge'
+  | 'mirror' | 'plant' | 'pouf' | 'clock' | 'frames' | 'art' | 'calendar'
+  | 'mat' | 'rug'
+  | 'curtain' | 'blinds'
+  | 'generic';
+
+interface Look {
+  palette: Palette;
+  /** First letter of the item's name, for the plain block. */
+  initial: string;
+}
 
 export const OUTLINE = '#141B3D';
 const LIGHT = '#F7F3EA';
@@ -17,7 +50,7 @@ interface Box {
   h: number;
 }
 
-type Draw = (item: CatalogueItem, box: Box) => ReactElement;
+type Draw = (look: Look, box: Box) => ReactElement;
 
 const line = { stroke: OUTLINE, strokeWidth: STROKE, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
 
@@ -523,7 +556,19 @@ const blinds: Draw = ({ palette }, { w }) => (
   </>
 );
 
-const drawings: Record<CatalogueItem['sprite'], Draw> = {
+/** A plain block for anything without a drawing yet. */
+const generic: Draw = ({ palette, initial }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={3} />
+    <rect x={4} y={4} width={Math.max(1, w - 8)} height={Math.max(1, h * 0.28)} rx={2} fill={palette.accent} />
+    <text x={w / 2} y={h * 0.72} textAnchor="middle" fontSize={Math.min(w, h) * 0.38} fontWeight={700} fill={OUTLINE} opacity={0.7}>
+      {initial}
+    </text>
+  </>
+);
+
+const drawings: Record<SpriteKind, Draw> = {
+  generic,
   mattress, campbed, bed,
   plasticchair, sofa, armchair, bench, cushions, officechair,
   lantern, floorlamp, solar, sconce, bracket,
@@ -539,6 +584,62 @@ const drawings: Record<CatalogueItem['sprite'], Draw> = {
   curtain, blinds,
 };
 
+const CATEGORY_PALETTES: Record<CatalogueItem['category'], Palette> = {
+  Design: { base: '#D9C7A3', accent: '#8A6440' },
+  Sleep: { base: '#ECE6F2', accent: '#5B78B5', detail: '#8A5A34' },
+  Kitchen: { base: '#DCE0E6', accent: '#7D8593' },
+  Bath: { base: '#E4EEF2', accent: '#6E9CB5' },
+  Comfort: { base: '#A0714A', accent: '#7C5534' },
+  Fun: { base: '#3B3F48', accent: '#C2452D' },
+  Skills: { base: '#C49A6C', accent: '#3A3F4A' },
+  Light: { base: '#EBD9A4', accent: '#6B5B3E' },
+  Decor: { base: '#C7B9D8', accent: '#6F5E92', detail: '#2E7D5B' },
+  Pets: { base: '#B5835A', accent: '#5C3920' },
+  Luxury: { base: '#C9A15A', accent: '#4B3F72', detail: '#F4F0E8' },
+};
+
+/** Picks a drawing for an item from what it is and what it's called. */
+function kindFor(item: CatalogueItem): SpriteKind {
+  const name = item.name.toLowerCase();
+  const has = (pattern: RegExp) => pattern.test(name);
+  const wall = item.placement === 'wallmount';
+  switch (roleOf(item)) {
+    case 'bed':
+      return has(/mattress/) ? 'mattress' : has(/bunk/) ? 'campbed' : 'bed';
+    case 'storage':
+      return has(/wardrobe|closet/) ? 'wardrobe' : has(/basket/) ? 'bags' : has(/shelf/) ? 'bookshelf' : 'drawers';
+    case 'seat':
+      return has(/plastic/) ? 'plasticchair' : has(/sofa/) ? 'sofa' : has(/bench/) ? 'bench' : has(/bean|pouf/) ? 'pouf' : 'armchair';
+    case 'table':
+      return has(/dining/) ? 'dining' : 'centretable';
+    case 'light':
+      return wall ? 'sconce' : has(/lantern/) ? 'lantern' : has(/solar|flood/) ? 'solar' : 'floorlamp';
+    case 'cooling':
+      return 'fan';
+    case 'cold':
+      return has(/cooler/) ? 'cooler' : 'fridge';
+    case 'wash':
+      return has(/drum|jerry/) ? 'jerrycan' : 'generic';
+    case 'desk':
+      return has(/workstation|computer/) ? 'workstation' : has(/shelf/) ? 'bookshelf' : 'desk';
+    case 'screen':
+      return wall ? 'walltv' : 'tvstand';
+    case 'fun':
+      return has(/speaker/) ? 'speaker' : 'generic';
+    case 'rug':
+      return has(/mat|runner/) ? 'mat' : 'rug';
+    case 'plant':
+      return 'plant';
+    case 'decor':
+      return has(/clock/) ? 'clock' : has(/frame/) ? 'frames' : has(/mirror/) && !wall ? 'mirror' : wall ? 'art' : 'generic';
+    case 'window':
+      return has(/blind/) ? 'blinds' : 'curtain';
+    default:
+      return 'generic';
+  }
+}
+
 export function Sprite({ item, w, h }: { item: CatalogueItem; w: number; h: number }) {
-  return drawings[item.sprite](item, { w, h });
+  const look: Look = { palette: CATEGORY_PALETTES[item.category], initial: item.name.charAt(0) };
+  return drawings[kindFor(item)](look, { w, h });
 }

@@ -1,15 +1,15 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { Receipt } from '../../components/Receipt';
 import { Room } from '../../components/Room';
-import type { Tag } from '../../data/catalogue';
 import { arrange, rearrange, type Arrangement } from '../../engine/arrange';
-import { vibePresets } from '../../engine/vibes';
+import { executePlan, type ExecuteOutcome } from '../../engine/execute';
+import { vibePresets, type StyleTag } from '../../engine/vibes';
 import { groupDigits, naira, parseNaira } from '../../lib/naira';
 import { useGame } from '../../shell/GameContext';
 
 type Phase = 'compose' | 'working' | 'result' | 'paying' | 'fixed';
 
-const tagWords: Record<Tag, string> = {
+const tagWords: Partial<Record<StyleTag, string>> = {
   luxe: 'luxe',
   budget: 'thrifty',
   starter: 'the basics',
@@ -48,9 +48,10 @@ export default function ArrangeScreen() {
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
   /** Charged but not yet saved: the next tap retries the save, never the charge. */
   const [awaitingSave, setAwaitingSave] = useState(false);
+  const retryRef = useRef<(() => Promise<ExecuteOutcome>) | null>(null);
 
   if (game.status !== 'ready') return null;
-  const { room, wallet, owned } = game;
+  const { room, wallet, storage, catalogue, catalogueById, pricing, capabilities } = game;
   const budget = parseNaira(budgetText);
 
   const showPlan = () => {
@@ -70,7 +71,8 @@ export default function ArrangeScreen() {
       return;
     }
     setPhase('working');
-    const outcome = await arrange({ vibe, budget, room, owned });
+    // The leaning picker arrives with the next UI pass; until then, neutral.
+    const outcome = await arrange({ vibe, leaning: 'neutral', budget, room, catalogue, storage, pricing, capabilities });
     if (!outcome.ok) {
       setError(outcome.message);
       setPhase('compose');
@@ -98,40 +100,28 @@ export default function ArrangeScreen() {
   const pay = async () => {
     if (!arrangement || phase === 'paying') return;
     setError(null);
-    if (!awaitingSave && arrangement.total > wallet) {
+    if (!awaitingSave && arrangement.grandTotal > wallet) {
       setError(
         `Not enough in your wallet. You have ${naira(wallet)} and this room costs ${naira(
-          arrangement.total,
+          arrangement.grandTotal,
         )}. Lower the budget and make a new plan.`,
       );
       return;
     }
     setPhase('paying');
-    let charged = awaitingSave;
-    try {
-      if (!charged) {
-        const payment = await game.adapter.charge(arrangement.total, `Fixam: ${arrangement.vibe}`);
-        if (!payment.ok) {
-          setError('Payment didn’t go through, so nothing was charged. Check your wallet and try again.');
-          setPhase('result');
-          return;
-        }
-        charged = true;
-        setAwaitingSave(true);
-      }
-      const saved = await game.adapter.saveLayout(arrangement.layout);
-      if (!saved.ok) throw new Error('save failed');
-      setAwaitingSave(false);
-      await game.refresh();
-      setPhase('fixed');
-    } catch {
-      setError(
-        charged
-          ? 'You’ve paid, but the room didn’t save to your flat. Tap Save layout to try again. You won’t be charged twice.'
-          : 'Fixam lost contact with the game, so nothing was charged. Try again.',
-      );
+    const retry = awaitingSave ? retryRef.current : null;
+    const outcome = retry ? await retry() : await executePlan(game.adapter, arrangement);
+    if (!outcome.ok) {
+      retryRef.current = outcome.retry ?? null;
+      setAwaitingSave(!!outcome.retry);
+      setError(outcome.message);
       setPhase('result');
+      return;
     }
+    retryRef.current = null;
+    setAwaitingSave(false);
+    await game.refresh();
+    setPhase('fixed');
   };
 
   const edit = () => {
@@ -143,7 +133,7 @@ export default function ArrangeScreen() {
 
   const pickPreset = (label: string, suggested: number) => {
     setVibe(label);
-    if (!budgetTouched) setBudgetText(groupDigits(suggested));
+    if (!budgetTouched) setBudgetText(groupDigits(pricing.scale(suggested)));
   };
 
   const onBudgetChange = (value: string) => {
@@ -192,6 +182,7 @@ export default function ArrangeScreen() {
       <Room
         room={room}
         layout={arrangement?.layout ?? []}
+        items={catalogueById}
         runKey={arrangement?.seed ?? 'empty'}
         selectedUid={selectedUid}
         onSelect={setSelectedUid}
@@ -274,9 +265,9 @@ export default function ArrangeScreen() {
 
       {showResult && (
         <>
-          {reading && reading.leaning.length > 0 && (
+          {reading && reading.strongestTags.length > 0 && (
             <p className="reading">
-              Read as {reading.leaning.map((tag) => tagWords[tag]).join(', ')}
+              Read as {reading.strongestTags.map((tag) => tagWords[tag] ?? tag).join(', ')}
               {reading.understood ? '' : ', since the vibe didn’t match anything Fixam knows'}.
             </p>
           )}

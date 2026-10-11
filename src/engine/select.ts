@@ -1,110 +1,140 @@
-import type { RoomSpec } from '../adapter/types';
-import { catalogue as defaultCatalogue, type CatalogueItem, type Category } from '../data/catalogue';
+import type { CatalogueItem, Room, StoredItem } from '../adapter/types';
+import type { Pricing } from './pricing';
 import { usableCells } from './solver';
+import {
+  COVERAGE_BANDS,
+  MUST_HAVES,
+  fitsRoomType,
+  isFinish,
+  isFlat,
+  isSupporting,
+  isTraitTag,
+  isWindowDressing,
+  itemCap,
+  roleCap,
+  roleOf,
+  rolePriority,
+  type Role,
+} from './traits';
 import type { TagWeights } from './vibes';
 
 /**
- * Chooses what to buy, in three passes:
+ * Chooses what goes into one room, all at displayed prices:
  *
- *  1. Must-haves (bed, seating, light, storage): best vibe match per category.
- *  2. Nice-to-haves: highest vibe match × priority first.
- *  3. Density: supporting pieces (rugs, stools, lamps, plants, wall decor) until
- *     the furniture covers enough of the floor to look furnished.
+ *  0. Storage: anything the player already owns that suits the room and the
+ *     style goes in first, at ₦0.
+ *  1. Must-haves for the room type (a bed for a bedroom, a toilet for a bath).
+ *  2. Floor and wall paint that match the vibe.
+ *  3. Nice-to-haves, best vibe match first.
+ *  4. Density: supporting pieces until the floor is covered for the room type.
+ *  5. Finishing touches on the walls.
  *
- * Every pass holds money back for the passes after it, so a big-ticket pick
+ * Every pass holds money back for the passes after it, so one big-ticket pick
  * can never leave the room half empty. The total never exceeds the budget.
  */
 
-export const mustHaveCategories: Category[] = ['sleep', 'seating', 'light', 'storage'];
-
-/** A furnished room covers this share of its usable floor. */
-export const COVERAGE_BAND = { low: 0.45, high: 0.6 } as const;
-
-/** What the selector aims for by footprint. Above the band's floor, because rugs and furniture overlap a little once placed. */
-export const DEFAULT_COVERAGE_TARGET = 0.53;
-
-/** How many picks one room takes from each category in passes 1 and 2. */
-const categoryCaps: Record<Category, number> = {
-  sleep: 1,
-  seating: 3,
-  light: 2,
-  storage: 3,
-  table: 2,
-  desk: 1,
-  media: 1,
-  power: 2,
-  cooling: 1,
-  kitchen: 1,
-  decor: 3,
-  rug: 1,
-  window: 1,
-};
-
-/** Looser caps for the density pass, which only adds supporting pieces. */
-const densityCaps: Partial<Record<Category, number>> = {
-  seating: 6,
-  light: 3,
-  table: 4,
-  decor: 6,
-  rug: 2,
-};
-
-/** Share of the floor solid furniture may cover, leaving room to walk. */
+/** Share of the room solid furniture may cover, leaving room to walk. */
 const SOLID_FLOOR_SHARE = 0.38;
 /** Share of the wall length wall-mounted items may use. */
 const WALL_SHARE = 0.45;
-/** Items scoring below this tag match are off-vibe and skipped as nice-to-haves. */
+/** Below this vibe match, an item is off-style. */
 const MIN_NICE_MATCH = 0.9;
-/** Wall pieces the density pass adds to finish a room, once the floor is covered. */
+/** Storage pieces below this match clash with the style and are suggested for sale instead. */
+const STORAGE_MIN_MATCH = 0.75;
+/** Wall pieces the finishing pass may add. */
 const FINISHING_WALL_PIECES = 3;
-/** Each extra copy of a multi-buy item is worth less than the one before. */
-const REPEAT_DECAY = 0.55;
-const OWNED_BONUS = 1.3;
+/** Keep the current finish unless the best match beats it by this much. */
+const FINISH_SWITCH_MARGIN = 1.1;
+const REPEAT_DECAY = 0.6;
+const STORAGE_BONUS = 1.5;
 
 export interface Pick {
   uid: string;
   item: CatalogueItem;
-  /** What the player pays. Zero for something they already own. */
+  /** What the player pays, at displayed prices. ₦0 for something from storage. */
   cost: number;
+  /** True when it comes from the player's storage. */
   owned: boolean;
+  source: 'storage' | 'buy';
+  /** The storage entry it comes from, when owned. */
+  storedUid?: string;
   mustHave: boolean;
   score: number;
 }
 
+export interface SellSuggestion {
+  storedUid: string;
+  item: CatalogueItem;
+  /** What the game pays back: 60% of the displayed list price. */
+  value: number;
+}
+
 export interface Selection {
+  /** Pieces to place on the grid. */
   picks: Pick[];
+  /** Floor and paint, when the plan changes them. */
+  finishes: { floor: Pick | null; wallPaint: Pick | null };
   total: number;
   left: number;
   budget: number;
-  /** Must-have categories the budget couldn't cover. */
-  missing: Category[];
-  /** The least a room with every must-have could cost this player. */
+  /** Must-have roles nothing affordable could fill. */
+  missing: Role[];
+  /** The least the must-haves could cost this player. */
   minimumForBasics: number;
   /** Footprint of the floor pieces as a share of usable floor, before placement. */
   plannedCoverage: number;
+  sellSuggestions: SellSuggestion[];
 }
 
 export interface SelectInput {
+  catalogue: CatalogueItem[];
+  room: Room;
   weights: TagWeights;
+  /** Money for furniture and finishes, after Fixam's fee. */
   budget: number;
-  room: RoomSpec;
-  owned: string[];
-  items?: CatalogueItem[];
-  /** Share of usable floor to fill by footprint. Defaults to DEFAULT_COVERAGE_TARGET. */
+  pricing: Pricing;
+  storage: StoredItem[];
+  /** Share of usable floor to fill by footprint. Defaults to the middle of the room type's band. */
   coverageTarget?: number;
+  /**
+   * Extra footprint, in cells, to allow for rugs that end up partly under
+   * furniture once placed. Raises both the target and the ceiling.
+   */
+  overlapAllowance?: number;
 }
 
-/** How well an item matches the vibe. 1 is neutral. */
+/** How well an item matches the weights. 1 is neutral. */
 export function tagMatch(item: CatalogueItem, weights: TagWeights): number {
-  const sum = item.tags.reduce((acc, tag) => acc + (weights[tag] ?? 0), 0);
-  return Math.max(0.1, 1 + sum / Math.sqrt(item.tags.length));
+  const style = item.tags.filter((t) => !isTraitTag(t));
+  const sum = style.reduce((acc, tag) => acc + (weights[tag] ?? 0), 0);
+  return Math.max(0.1, 1 + sum / Math.sqrt(Math.max(1, style.length)));
 }
 
-function fitsRoom(item: CatalogueItem, room: RoomSpec): boolean {
+/** Luxe vibes lean towards high-star pieces, thrifty ones away from them. */
+function starFactor(item: CatalogueItem, weights: TagWeights): number {
+  const appetite = (weights.luxe ?? 0) + 0.5 * (weights.glam ?? 0) - (weights.budget ?? 0) - 0.5 * (weights.starter ?? 0);
+  return Math.min(2.5, Math.max(0.3, 1 + 0.12 * appetite * (item.stars - 1.5)));
+}
+
+/** Overall appeal of an item for this vibe, before priority. */
+export function styleScore(item: CatalogueItem, weights: TagWeights): number {
+  return tagMatch(item, weights) * starFactor(item, weights);
+}
+
+function fitsFootprint(item: CatalogueItem, room: Room): boolean {
   if (item.placement === 'wallmount') return true;
   const long = Math.max(item.w, item.h);
   const short = Math.min(item.w, item.h);
   return long <= Math.max(room.widthCells, room.heightCells) && short <= Math.min(room.widthCells, room.heightCells);
+}
+
+/** True when the item can go in this room at all: right room type, fits, and placeable. */
+export function belongsIn(item: CatalogueItem, room: Room): boolean {
+  if (isFinish(item)) return false;
+  if (!fitsRoomType(item, room.type)) return false;
+  if (item.placement === 'yard' && room.type !== 'yard') return false;
+  if (isWindowDressing(item) && room.windows.length === 0) return false;
+  return fitsFootprint(item, room);
 }
 
 /** Floor cells an item takes up. Wall-mounted pieces take none. */
@@ -112,23 +142,45 @@ function floorArea(item: CatalogueItem): number {
   return item.placement === 'wallmount' ? 0 : item.w * item.h;
 }
 
-type Pass = 'core' | 'density';
+/** Corners the doorways' clearance zones run into. */
+function doorCorners(room: Room): number {
+  const corners = new Set<string>();
+  for (const door of room.doors) {
+    const length = door.wall === 'north' || door.wall === 'south' ? room.widthCells : room.heightCells;
+    if (door.offset === 0) corners.add(`${door.wall}:start`);
+    if (door.offset + door.width === length) corners.add(`${door.wall}:end`);
+  }
+  // Each corner is shared by two walls; count distinct physical corners.
+  const physical = new Set<string>();
+  for (const key of corners) {
+    const [wall, end] = key.split(':');
+    const corner =
+      wall === 'north' ? (end === 'start' ? 'nw' : 'ne')
+      : wall === 'south' ? (end === 'start' ? 'sw' : 'se')
+      : wall === 'west' ? (end === 'start' ? 'nw' : 'sw')
+      : end === 'start' ? 'ne' : 'se';
+    physical.add(corner);
+  }
+  return physical.size;
+}
+
+/** The same supporting pieces in different orders, for estimating reachable floor. */
+type FillerOrders = CatalogueItem[][];
 
 interface Limits {
   solidCap: number;
   floorCap: number;
   wallCap: number;
-  /** Corners not taken by the doorway. */
   cornerCap: number;
   targetCells: number;
+  usable: number;
 }
 
 /** The running shopping list. Cheap to copy, so passes can try a pick before committing. */
 class Basket {
   picks: Pick[] = [];
   countById = new Map<string, number>();
-  countByCategory = new Map<Category, number>();
-  ownedLeft: Set<string>;
+  countByRole = new Map<Role, number>();
   remaining: number;
   solidUsed = 0;
   floorUsed = 0;
@@ -136,20 +188,20 @@ class Basket {
   cornersUsed = 0;
 
   constructor(
+    readonly room: Room,
     readonly weights: TagWeights,
+    readonly pricing: Pricing,
     readonly limits: Limits,
-    owned: Iterable<string>,
     budget: number,
   ) {
-    this.ownedLeft = new Set(owned);
     this.remaining = budget;
   }
 
   clone(): Basket {
-    const copy = new Basket(this.weights, this.limits, this.ownedLeft, this.remaining);
+    const copy = new Basket(this.room, this.weights, this.pricing, this.limits, this.remaining);
     copy.picks = [...this.picks];
     copy.countById = new Map(this.countById);
-    copy.countByCategory = new Map(this.countByCategory);
+    copy.countByRole = new Map(this.countByRole);
     copy.solidUsed = this.solidUsed;
     copy.floorUsed = this.floorUsed;
     copy.wallUsed = this.wallUsed;
@@ -157,205 +209,290 @@ class Basket {
     return copy;
   }
 
-  costOf(item: CatalogueItem): number {
-    return this.ownedLeft.has(item.id) ? 0 : item.naira;
-  }
-
-  scoreOf(item: CatalogueItem): number {
+  score(item: CatalogueItem, fromStorage = false): number {
     const copies = this.countById.get(item.id) ?? 0;
-    const owned = this.ownedLeft.has(item.id) ? OWNED_BONUS : 1;
-    return tagMatch(item, this.weights) * item.priority * owned * Math.pow(REPEAT_DECAY, copies);
+    return (
+      styleScore(item, this.weights) *
+      rolePriority(roleOf(item), this.room.type) *
+      Math.pow(REPEAT_DECAY, copies) *
+      (fromStorage ? STORAGE_BONUS : 1)
+    );
   }
 
-  canHold(item: CatalogueItem, pass: Pass): boolean {
-    if ((this.countById.get(item.id) ?? 0) >= (item.maxQty ?? 1)) return false;
-    const cap = Math.max(categoryCaps[item.category], pass === 'density' ? densityCaps[item.category] ?? 0 : 0);
-    if ((this.countByCategory.get(item.category) ?? 0) >= cap) return false;
-    if (item.placement === 'wallmount') return !!item.onWindow || this.wallUsed + item.w <= this.limits.wallCap;
-    if (item.placement === 'corner' && this.cornersUsed >= this.limits.cornerCap) return false;
+  canHold(item: CatalogueItem): boolean {
+    const { limits, room } = this;
+    const role = roleOf(item);
+    if ((this.countById.get(item.id) ?? 0) >= itemCap(item, room, limits.usable)) return false;
+    if ((this.countByRole.get(role) ?? 0) >= roleCap(role, room, limits.usable)) return false;
+    if (item.placement === 'wallmount') return isWindowDressing(item) || this.wallUsed + item.w <= limits.wallCap;
+    if (item.placement === 'corner' && this.cornersUsed >= limits.cornerCap) return false;
     const area = floorArea(item);
-    if (this.floorUsed + area > this.limits.floorCap) return false;
-    return item.flat || this.solidUsed + area <= this.limits.solidCap;
+    if (this.floorUsed + area > limits.floorCap) return false;
+    return isFlat(item) || this.solidUsed + area <= limits.solidCap;
   }
 
-  needsMet(item: CatalogueItem): boolean {
-    return !item.needs || this.picks.some((p) => item.needs!.includes(p.item.id) || item.needs!.includes(p.item.category));
-  }
-
-  take(item: CatalogueItem, mustHave: boolean): void {
-    const cost = this.costOf(item);
+  take(item: CatalogueItem, options: { mustHave?: boolean; storedUid?: string } = {}): void {
+    const owned = options.storedUid !== undefined;
+    const cost = owned ? 0 : this.pricing.price(item);
     const copies = this.countById.get(item.id) ?? 0;
-    this.picks.push({ uid: `${item.id}:${copies + 1}`, item, cost, owned: cost === 0, mustHave, score: this.scoreOf(item) });
-    this.ownedLeft.delete(item.id);
+    const role = roleOf(item);
+    this.picks.push({
+      uid: owned ? (options.storedUid as string) : `${item.id}:${copies + 1}`,
+      item,
+      cost,
+      owned,
+      source: owned ? 'storage' : 'buy',
+      storedUid: options.storedUid,
+      mustHave: options.mustHave ?? false,
+      score: this.score(item, owned),
+    });
     this.countById.set(item.id, copies + 1);
-    this.countByCategory.set(item.category, (this.countByCategory.get(item.category) ?? 0) + 1);
+    this.countByRole.set(role, (this.countByRole.get(role) ?? 0) + 1);
     this.remaining -= cost;
     if (item.placement === 'wallmount') {
-      if (!item.onWindow) this.wallUsed += item.w;
-    } else {
-      this.floorUsed += floorArea(item);
-      if (!item.flat) this.solidUsed += floorArea(item);
-      if (item.placement === 'corner') this.cornersUsed += 1;
+      if (!isWindowDressing(item)) this.wallUsed += item.w;
+      return;
     }
+    this.floorUsed += floorArea(item);
+    if (!isFlat(item)) this.solidUsed += floorArea(item);
+    if (item.placement === 'corner') this.cornersUsed += 1;
   }
 
-  /** This basket with `item` added, for trying a pick out. */
   with(item: CatalogueItem): Basket {
     const next = this.clone();
-    next.take(item, false);
+    next.take(item);
     return next;
   }
 
   /**
-   * How much floor this basket could cover, up to the target, if `money` were
-   * spent on the cheapest-per-cell supporting pieces.
+   * How much floor could be covered, up to the target, by spending `money` on
+   * supporting pieces. Tries each filler ordering and keeps the best: cheapest
+   * per cell usually wins, but when a role has few slots left (only so many
+   * rugs fit a room), bigger pieces first goes further.
    */
-  reachableFloor(pool: CatalogueItem[], money: number): number {
-    if (this.floorUsed >= this.limits.targetCells) return this.limits.targetCells;
-    const sim = this.clone();
-    let left = money;
-    const fillers = pool
-      .filter((item) => item.support && floorArea(item) > 0)
-      .sort((a, b) => sim.costOf(a) / floorArea(a) - sim.costOf(b) / floorArea(b));
-    for (const item of fillers) {
-      while (sim.floorUsed < this.limits.targetCells && sim.canHold(item, 'density') && sim.costOf(item) <= left) {
-        left -= sim.costOf(item);
-        sim.take(item, false);
+  reachableFloor(orders: FillerOrders, money: number): number {
+    const target = this.limits.targetCells;
+    if (this.floorUsed >= target) return target;
+    let best = this.floorUsed;
+    for (const fillers of orders) {
+      const sim = this.clone();
+      let left = money;
+      for (const item of fillers) {
+        const price = this.pricing.price(item);
+        while (sim.floorUsed < target && price <= left && sim.canHold(item)) {
+          left -= price;
+          sim.take(item);
+        }
       }
+      best = Math.max(best, sim.floorUsed);
+      if (best >= target) break;
     }
-    return Math.min(sim.floorUsed, this.limits.targetCells);
+    return Math.min(best, target);
   }
 
-  /** Floor still reachable after buying `item`, keeping `holdBack` aside for other things. */
-  reachableAfter(item: CatalogueItem, pool: CatalogueItem[], holdBack = 0): number {
-    return this.with(item).reachableFloor(pool, this.remaining - this.costOf(item) - holdBack);
+  reachableAfter(item: CatalogueItem, fillers: FillerOrders, holdBack = 0): number {
+    return this.with(item).reachableFloor(fillers, this.remaining - this.pricing.price(item) - holdBack);
   }
-}
-
-/** Corners the doorway's clearance zone runs into. */
-function doorCorners(room: RoomSpec): number {
-  const { door } = room;
-  const length = door.wall === 'north' || door.wall === 'south' ? room.widthCells : room.heightCells;
-  return Number(door.offset === 0) + Number(door.offset + door.width === length);
 }
 
 export function select(input: SelectInput): Selection {
-  const { weights, room } = input;
+  const { room, weights, pricing } = input;
   const budget = Math.max(0, Math.floor(input.budget));
-  const pool = (input.items ?? defaultCatalogue).filter((item) => fitsRoom(item, room));
+  const byId = new Map(input.catalogue.map((item) => [item.id, item]));
+  const pool = input.catalogue.filter((item) => belongsIn(item, room));
 
   const usable = usableCells(room);
-  const roomCells = room.widthCells * room.heightCells;
-  const target = Math.min(input.coverageTarget ?? DEFAULT_COVERAGE_TARGET, COVERAGE_BAND.high);
+  const band = COVERAGE_BANDS[room.type];
+  const target = Math.min(input.coverageTarget ?? (band.low + band.high) / 2, band.high);
+  const perimeter = 2 * (room.widthCells + room.heightCells);
+  const openings = [...room.doors, ...room.windows].reduce((sum, o) => sum + o.width, 0);
+  const allowance = Math.max(0, Math.round(input.overlapAllowance ?? 0));
   const limits: Limits = {
-    solidCap: Math.floor(roomCells * SOLID_FLOOR_SHARE),
-    floorCap: Math.floor(usable * COVERAGE_BAND.high),
-    wallCap: Math.floor(2 * (room.widthCells + room.heightCells) * WALL_SHARE),
+    solidCap: Math.floor(room.widthCells * room.heightCells * SOLID_FLOOR_SHARE),
+    floorCap: Math.floor(usable * band.high) + allowance,
+    wallCap: Math.max(0, Math.floor((perimeter - openings) * WALL_SHARE)),
     cornerCap: 4 - doorCorners(room),
-    targetCells: Math.ceil(usable * target),
+    targetCells: Math.ceil(usable * target) + allowance,
+    usable,
   };
-  const basket = new Basket(weights, limits, input.owned, budget);
+  const basket = new Basket(room, weights, pricing, limits, budget);
+
+  const fillers = pool
+    .filter((item) => isSupporting(item) && floorArea(item) > 0)
+    .sort((a, b) => pricing.price(a) / floorArea(a) - pricing.price(b) / floorArea(b));
+  const fillerOrders: FillerOrders = [
+    fillers,
+    [...fillers].sort((a, b) => floorArea(b) - floorArea(a) || pricing.price(a) / floorArea(a) - pricing.price(b) / floorArea(b)),
+  ];
 
   const better = (a: CatalogueItem, b: CatalogueItem) => {
-    const diff = basket.scoreOf(b) - basket.scoreOf(a);
-    return diff !== 0 ? diff : basket.costOf(a) - basket.costOf(b);
+    const diff = basket.score(b) - basket.score(a);
+    return diff !== 0 ? diff : pricing.price(a) - pricing.price(b);
   };
 
-  const cheapestIn = (category: Category) => {
-    const costs = pool.filter((item) => item.category === category && !item.needs).map((item) => basket.costOf(item));
-    return costs.length ? Math.min(...costs) : Infinity;
+  // Pass 0: storage. Owned pieces that suit this room and style go in first, at ₦0.
+  const stored = input.storage
+    .map((entry) => ({ entry, item: byId.get(entry.itemId) }))
+    .filter((s): s is { entry: StoredItem; item: CatalogueItem } => !!s.item && !isFinish(s.item));
+  const sellSuggestions: SellSuggestion[] = stored
+    .filter((s) => tagMatch(s.item, weights) < STORAGE_MIN_MATCH)
+    .map((s) => ({ storedUid: s.entry.uid, item: s.item, value: pricing.resale(s.item) }));
+  const usefulStorage = stored
+    .filter((s) => belongsIn(s.item, room) && tagMatch(s.item, weights) >= STORAGE_MIN_MATCH)
+    .sort((a, b) => {
+      const mustA = Number(MUST_HAVES[room.type].includes(roleOf(a.item)));
+      const mustB = Number(MUST_HAVES[room.type].includes(roleOf(b.item)));
+      return mustB - mustA || basket.score(b.item, true) - basket.score(a.item, true);
+    });
+  // Floor the cheapest piece for each unfilled must-have would need, so owned
+  // pieces never crowd out the essentials.
+  const mustHaveArea = (role: Role) => {
+    const cheapest = pool
+      .filter((item) => roleOf(item) === role)
+      .sort((a, b) => pricing.price(a) - pricing.price(b) || floorArea(a) - floorArea(b))[0];
+    return cheapest ? floorArea(cheapest) : 0;
   };
+  const usedStorage = new Set<string>();
+  const sweepStorage = () => {
+    for (const { entry, item } of usefulStorage) {
+      if (usedStorage.has(entry.uid) || !basket.canHold(item)) continue;
+      const role = roleOf(item);
+      const reserve = MUST_HAVES[room.type]
+        .filter((r) => r !== role && !basket.countByRole.get(r))
+        .reduce((sum, r) => sum + mustHaveArea(r), 0);
+      const area = floorArea(item);
+      if (area > 0 && basket.floorUsed + area + reserve > limits.floorCap) continue;
+      if (area > 0 && !isFlat(item) && basket.solidUsed + area + reserve > limits.solidCap) continue;
+      basket.take(item, { storedUid: entry.uid, mustHave: MUST_HAVES[room.type].includes(role) });
+      usedStorage.add(entry.uid);
+    }
+  };
+  sweepStorage();
 
-  const minimumForBasics = mustHaveCategories.reduce((sum, c) => sum + cheapestIn(c), 0);
+  // Pass 1: must-haves not already covered from storage.
+  const mustHaves = MUST_HAVES[room.type].filter((role) => !basket.countByRole.get(role));
+  const cheapestFor = (role: Role) => {
+    const prices = pool.filter((item) => roleOf(item) === role).map((item) => pricing.price(item));
+    return prices.length ? Math.min(...prices) : Infinity;
+  };
+  const minimumForBasics = MUST_HAVES[room.type]
+    .filter((role) => !usefulStorage.some((s) => roleOf(s.item) === role))
+    .reduce((sum, role) => sum + cheapestFor(role), 0);
 
-  // Pass 1: must-haves. Hold back enough for the remaining must-haves and,
-  // where the budget allows, for filling the floor afterwards.
-  const missing: Category[] = [];
-  mustHaveCategories.forEach((category, index) => {
-    const laterMustHaves = mustHaveCategories.slice(index + 1).reduce((sum, later) => sum + cheapestIn(later), 0);
+  const missing: Role[] = [];
+  mustHaves.forEach((role, index) => {
+    const later = mustHaves.slice(index + 1).reduce((sum, r) => sum + cheapestFor(r), 0);
     const options = pool.filter(
-      (item) =>
-        item.category === category && !item.needs && basket.canHold(item, 'core') && basket.costOf(item) <= basket.remaining,
+      (item) => roleOf(item) === role && basket.canHold(item) && pricing.price(item) <= basket.remaining,
     );
-    const keepsBasics = options.filter((item) => basket.costOf(item) <= basket.remaining - laterMustHaves);
-    // Among the choices that keep the basics affordable, take the best match that
-    // can still reach the coverage target; failing that, whichever gets closest.
+    const keepsBasics = options.filter((item) => pricing.price(item) <= basket.remaining - later);
     const candidates = keepsBasics.length ? keepsBasics : options;
-    const reach = new Map(candidates.map((item) => [item, basket.reachableAfter(item, pool, laterMustHaves)]));
+    // Best match that can still reach the coverage target; failing that, whichever gets closest.
+    const reach = new Map(candidates.map((item) => [item, basket.reachableAfter(item, fillerOrders, later)]));
     const furthest = Math.max(0, ...reach.values());
     const choice = candidates
       .filter((item) => reach.get(item) === furthest || (reach.get(item) ?? 0) >= limits.targetCells)
       .sort(better)[0];
-    if (choice) basket.take(choice, true);
-    else missing.push(category);
+    if (choice) basket.take(choice, { mustHave: true });
+    else missing.push(role);
   });
 
-  // Pass 2: nice-to-haves, only those that don't cost the room its floor cover.
-  const reachNow = () => basket.reachableFloor(pool, basket.remaining);
+  // With the essentials in, any owned piece that now fits goes in before anything else is bought.
+  sweepStorage();
+
+  const reachNow = () => basket.reachableFloor(fillerOrders, basket.remaining);
+
+  // Pass 2: floor and paint, when a better match than what's there is affordable.
+  const finishes: Selection['finishes'] = { floor: null, wallPaint: null };
+  for (const [slot, role, current] of [
+    ['floor', 'flooring', room.floor],
+    ['wallPaint', 'paint', room.wallPaint],
+  ] as const) {
+    const options = input.catalogue.filter(
+      (item) => isFinish(item) && roleOf(item) === role && fitsRoomType(item, room.type),
+    );
+    if (!options.length) continue;
+    const score = (item: CatalogueItem) => styleScore(item, weights);
+    const best = [...options].sort((a, b) => score(b) - score(a) || pricing.price(a) - pricing.price(b))[0] as CatalogueItem;
+    const existing = current ? byId.get(current) : undefined;
+    if (existing && (existing.id === best.id || score(best) < score(existing) * FINISH_SWITCH_MARGIN)) continue;
+    const price = pricing.price(best);
+    if (price > basket.remaining || basket.reachableFloor(fillerOrders, basket.remaining - price) < reachNow()) continue;
+    basket.remaining -= price;
+    finishes[slot] = {
+      uid: `finish:${slot}`,
+      item: best,
+      cost: price,
+      owned: false,
+      source: 'buy',
+      mustHave: false,
+      score: score(best),
+    };
+  }
+
+  // Pass 3: nice-to-haves that don't cost the room its floor cover.
   for (;;) {
     const reachable = reachNow();
     const next = pool
       .filter(
         (item) =>
-          basket.canHold(item, 'core') &&
-          basket.needsMet(item) &&
-          tagMatch(item, weights) >= MIN_NICE_MATCH &&
-          basket.costOf(item) <= basket.remaining &&
-          basket.reachableAfter(item, pool) >= reachable,
+          basket.canHold(item) &&
+          styleScore(item, weights) >= MIN_NICE_MATCH &&
+          pricing.price(item) <= basket.remaining &&
+          basket.reachableAfter(item, fillerOrders) >= reachable,
       )
       .sort(better)[0];
     if (!next) break;
-    basket.take(next, false);
+    basket.take(next);
   }
 
-  // Pass 3: density. Rugs and small decorative pieces first: they fill the
-  // floor without narrowing walkways (rugs are walked on), and they're cheap.
-  const support = pool.filter((item) => item.support);
+  // Pass 4: density. Rugs and small pieces first: they fill floor without
+  // narrowing walkways (rugs are walked on), and they're cheap.
   const densityRank = (item: CatalogueItem) => {
-    const shape = item.flat ? 1.6 : item.w * item.h === 1 ? 1.2 : 1;
-    return tagMatch(item, weights) * shape * Math.pow(REPEAT_DECAY, basket.countById.get(item.id) ?? 0);
+    const shape = isFlat(item) ? 1.6 : item.w * item.h === 1 ? 1.2 : 1;
+    return styleScore(item, weights) * shape * Math.pow(REPEAT_DECAY, basket.countById.get(item.id) ?? 0);
   };
-  const byDensityRank = (a: CatalogueItem, b: CatalogueItem) => densityRank(b) - densityRank(a);
-
   while (basket.floorUsed < limits.targetCells) {
-    const affordable = support.filter(
-      (item) =>
-        floorArea(item) > 0 && basket.canHold(item, 'density') && basket.needsMet(item) && basket.costOf(item) <= basket.remaining,
-    );
-    // Prefer picks that keep the target in reach; otherwise take whatever covers most per naira.
+    const affordable = fillers.filter((item) => basket.canHold(item) && pricing.price(item) <= basket.remaining);
     const reachable = reachNow();
-    const onTrack = affordable.filter((item) => basket.reachableAfter(item, pool) >= reachable);
+    const onTrack = affordable.filter((item) => basket.reachableAfter(item, fillerOrders) >= reachable);
     const next = onTrack.length
-      ? onTrack.sort(byDensityRank)[0]
-      : affordable.sort((a, b) => floorArea(b) / (basket.costOf(b) || 1) - floorArea(a) / (basket.costOf(a) || 1))[0];
+      ? onTrack.sort((a, b) => densityRank(b) - densityRank(a))[0]
+      : affordable.sort((a, b) => floorArea(b) / (pricing.price(b) || 1) - floorArea(a) / (pricing.price(a) || 1))[0];
     if (!next) break;
-    basket.take(next, false);
+    basket.take(next);
   }
 
-  // Finish the walls: curtains first if there are none, then a few decorative pieces.
+  // Pass 5: finish the walls. Window dressing first, then a few decorative pieces.
   for (let added = 0; added < FINISHING_WALL_PIECES; ) {
-    const next = support
+    const next = pool
       .filter(
         (item) =>
           item.placement === 'wallmount' &&
-          basket.canHold(item, 'density') &&
-          basket.costOf(item) <= basket.remaining &&
+          item.stars <= 1 &&
+          basket.canHold(item) &&
+          pricing.price(item) <= basket.remaining &&
           tagMatch(item, weights) >= 0.5,
       )
-      .sort((a, b) => Number(!!b.onWindow) - Number(!!a.onWindow) || byDensityRank(a, b))[0];
+      .sort(
+        (a, b) => Number(isWindowDressing(b)) - Number(isWindowDressing(a)) || styleScore(b, weights) - styleScore(a, weights),
+      )[0];
     if (!next) break;
-    basket.take(next, false);
-    if (!next.onWindow) added++;
+    basket.take(next);
+    if (!isWindowDressing(next)) added++;
   }
 
-  const total = basket.picks.reduce((sum, p) => sum + p.cost, 0);
+  const finishCost = (finishes.floor?.cost ?? 0) + (finishes.wallPaint?.cost ?? 0);
+  const total = basket.picks.reduce((sum, p) => sum + p.cost, 0) + finishCost;
   return {
     picks: basket.picks,
+    finishes,
     total,
     left: budget - total,
     budget,
     missing,
     minimumForBasics,
     plannedCoverage: usable > 0 ? basket.floorUsed / usable : 0,
+    sellSuggestions,
   };
 }

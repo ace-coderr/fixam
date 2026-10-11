@@ -1,6 +1,5 @@
 import { useId, type ReactNode } from 'react';
-import type { Opening, PlacedItem, RoomSpec } from '../adapter/types';
-import { getItem } from '../data/catalogue';
+import type { CatalogueItem, Opening, PlacedItem, Room as RoomSpec } from '../adapter/types';
 import { Sprite } from './sprites';
 
 /** SVG units per grid cell, and the wall thickness drawn around the floor. */
@@ -10,6 +9,8 @@ const WALL = 9;
 interface RoomProps {
   room: RoomSpec;
   layout: PlacedItem[];
+  /** Catalogue items by id, as served by the game. */
+  items: ReadonlyMap<string, CatalogueItem>;
   /** Changing this replays the placement sequence. */
   runKey: string | number;
   selectedUid: string | null;
@@ -43,8 +44,7 @@ function openingRect(room: RoomSpec, o: Opening) {
   return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
 }
 
-function Door({ room }: { room: RoomSpec }) {
-  const { door } = room;
+function Door({ room, door }: { room: RoomSpec; door: Opening }) {
   const to = wallFrame(room, door.wall);
   const r = openingRect(room, door);
   const leaf = door.width * CELL;
@@ -65,8 +65,8 @@ function Door({ room }: { room: RoomSpec }) {
   );
 }
 
-function Window({ room }: { room: RoomSpec }) {
-  const r = openingRect(room, room.window);
+function Window({ room, window }: { room: RoomSpec; window: Opening }) {
+  const r = openingRect(room, window);
   const horizontal = r.w > r.h;
   return (
     <g aria-hidden="true">
@@ -80,14 +80,14 @@ function Window({ room }: { room: RoomSpec }) {
   );
 }
 
-function describe(room: RoomSpec, layout: PlacedItem[]): string {
+function describe(room: RoomSpec, layout: PlacedItem[], items: ReadonlyMap<string, CatalogueItem>): string {
   const size = `${room.widthCells / 2}m by ${room.heightCells / 2}m`;
   if (layout.length === 0) return `Floor plan of an empty room, ${size}.`;
-  const names = layout.map((p) => getItem(p.itemId).name.toLowerCase());
+  const names = layout.map((p) => (items.get(p.itemId)?.name ?? 'item').toLowerCase());
   return `Floor plan, ${size}, with ${names.length} items: ${names.join(', ')}.`;
 }
 
-export function Room({ room, layout, runKey, selectedUid, onSelect, overlay }: RoomProps) {
+export function Room({ room, layout, items, runKey, selectedUid, onSelect, overlay }: RoomProps) {
   const gridId = `grid-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const W = room.widthCells * CELL;
   const H = room.heightCells * CELL;
@@ -104,7 +104,7 @@ export function Room({ room, layout, runKey, selectedUid, onSelect, overlay }: R
       <svg
         viewBox={`${-WALL} ${-WALL} ${W + WALL * 2} ${H + WALL * 2}`}
         role="img"
-        aria-label={describe(room, layout)}
+        aria-label={describe(room, layout, items)}
         onClick={() => onSelect(null)}
       >
         <defs>
@@ -116,17 +116,22 @@ export function Room({ room, layout, runKey, selectedUid, onSelect, overlay }: R
         <rect x={-WALL} y={-WALL} width={W + WALL * 2} height={H + WALL * 2} rx={3} fill="var(--wall)" />
         <rect x={0} y={0} width={W} height={H} fill="var(--floor)" />
         <rect x={0} y={0} width={W} height={H} fill={`url(#${gridId})`} />
-        <Window room={room} />
-        <Door room={room} />
+        {room.windows.map((window, i) => (
+          <Window key={`window-${i}`} room={room} window={window} />
+        ))}
+        {room.doors.map((door, i) => (
+          <Door key={`door-${i}`} room={room} door={door} />
+        ))}
 
         <g key={runKey}>
           {drawOrder.map(({ p, sequence }) => {
-            const item = getItem(p.itemId);
+            const item = items.get(p.itemId);
+            if (!item) return null;
             const fw = p.w * CELL;
             const fh = p.h * CELL;
-            const lw = p.rot % 2 === 0 ? fw : fh;
-            const lh = p.rot % 2 === 0 ? fh : fw;
-            const transform = `translate(${p.x * CELL + fw / 2} ${p.y * CELL + fh / 2}) rotate(${p.rot * 90}) translate(${-lw / 2} ${-lh / 2})`;
+            const lw = p.rotation % 180 === 0 ? fw : fh;
+            const lh = p.rotation % 180 === 0 ? fh : fw;
+            const transform = `translate(${p.x * CELL + fw / 2} ${p.y * CELL + fh / 2}) rotate(${p.rotation}) translate(${-lw / 2} ${-lh / 2})`;
             return (
               <g
                 key={p.uid}

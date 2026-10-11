@@ -8,8 +8,26 @@ import { mockAdapter } from './mock';
  *   export const adapter: GameAdapter = createLagosLifeAdapter(window.LagosLife);
  *
  * Any object that satisfies `GameAdapter` works. Nothing else in the app
- * imports `mock.ts` directly.
+ * imports `mock.ts` or `mockCatalogue.ts` directly. To try another price tier
+ * or execution mode against the mock, use createMockAdapter({ tier, capabilities }).
  */
 export const adapter: GameAdapter = mockAdapter;
 
-export type { GameAdapter, Opening, PlacedItem, Player, RoomSpec, Rotation, Wall } from './types';
+export type {
+  Capabilities,
+  CatalogueItem,
+  Category,
+  Finishes,
+  GameAdapter,
+  House,
+  Opening,
+  PlacedItem,
+  Placement,
+  Player,
+  Property,
+  Room,
+  RoomType,
+  Rotation,
+  StoredItem,
+  Wall,
+} from './types';
