@@ -89,6 +89,8 @@ export interface Room {
   /** Catalogue id of the current wall paint, if any. */
   wallPaint: string | null;
   type: RoomType;
+  /** True once furniture has been placed in it. */
+  furnished?: boolean;
 }
 
 export interface House {
@@ -108,6 +110,8 @@ export interface Property {
   heightCells: number;
   /** Before the player's price multiplier, like item prices. */
   basePrice: number;
+  /** The property the player's character lives in. */
+  livesHere: boolean;
 }
 
 /** Something the player bought but hasn't placed anywhere. */

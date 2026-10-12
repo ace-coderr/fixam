@@ -40,10 +40,17 @@ const STORAGE: Record<MockTier, string[]> = {
   'big-man': ['lekki-king-bed', 'diamond-studded-throne', 'jacuzzi', 'air-fryer', 'bunk-bed'],
 };
 
-export const MOCK_PROPERTIES: Property[] = [
+export const MOCK_PROPERTIES: Omit<Property, 'livesHere'>[] = [
   { id: 'yaba-self-contain', name: 'Self-contain, Yaba', tier: 'self-contain', widthCells: 7, heightCells: 7, basePrice: 1_200_000 },
   { id: 'banana-island-mansion', name: 'Mansion, Banana Island', tier: 'mansion', widthCells: 14, heightCells: 14, basePrice: 900_000_000 },
 ];
+
+/** Where each mock player lives: starters in the self-contain, everyone else in the mansion. */
+const HOME: Record<MockTier, string> = {
+  starter: 'yaba-self-contain',
+  mid: 'banana-island-mansion',
+  'big-man': 'banana-island-mansion',
+};
 
 const HOUSES: Record<string, House> = {
   'yaba-self-contain': {
@@ -96,6 +103,7 @@ const HOUSES: Record<string, House> = {
         floor: 'floor-terrazzo',
         wallPaint: 'paint-classic-cream',
         type: 'parlour',
+        furnished: true,
       },
       {
         id: 'mansion-bedroom',
@@ -185,7 +193,7 @@ export function createMockAdapter(options: MockOptions = {}): GameAdapter {
 
     getCatalogue: () => respond(mockCatalogue.map((item) => ({ ...item, tags: [...item.tags], roomTypes: [...item.roomTypes] }))),
 
-    getProperties: () => respond(MOCK_PROPERTIES.map((p) => ({ ...p }))),
+    getProperties: () => respond(MOCK_PROPERTIES.map((p) => ({ ...p, livesHere: p.id === HOME[tier] }))),
 
     getHouse(propertyId) {
       const house = houses[propertyId];
@@ -226,10 +234,25 @@ export function createMockAdapter(options: MockOptions = {}): GameAdapter {
       }
       if (finishes.floor) room.floor = finishes.floor;
       if (finishes.wallPaint) room.wallPaint = finishes.wallPaint;
+      room.furnished = room.furnished || layout.length > 0;
       return respond({ ok: true });
     },
   };
 }
 
-/** The default mock: a starter-tier player whose game lets Fixam buy and place. */
-export const mockAdapter: GameAdapter = createMockAdapter();
+/**
+ * The default mock: a starter-tier player whose game lets Fixam buy and place.
+ * For trying other set-ups in the browser, add ?mock=mid or ?mock=big-man for
+ * another price tier, and &mode=plan for a game that won't let Fixam buy or place.
+ */
+function fromUrl(): MockOptions {
+  if (typeof window === 'undefined') return {};
+  const params = new URLSearchParams(window.location.search);
+  const tier = params.get('mock');
+  return {
+    tier: tier === 'mid' || tier === 'big-man' ? tier : 'starter',
+    capabilities: params.get('mode') === 'plan' ? { canBuy: false, canPlace: true } : FULL,
+  };
+}
+
+export const mockAdapter: GameAdapter = createMockAdapter(fromUrl());

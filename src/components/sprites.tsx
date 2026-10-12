@@ -40,7 +40,7 @@ interface Look {
   initial: string;
 }
 
-export const OUTLINE = '#141B3D';
+export const OUTLINE = '#0F1522';
 const LIGHT = '#F7F3EA';
 const GLOW = '#FFF1C9';
 const STROKE = 1.1;
@@ -556,6 +556,349 @@ const blinds: Draw = ({ palette }, { w }) => (
   </>
 );
 
+// Confirmed game items ---------------------------------------------------------
+// Bespoke top-down drawings for every verified Sleep, Kitchen, Bath and Comfort
+// item, each with its own palette.
+
+function Pillow({ x, y, w, h }: { x: number; y: number; w: number; h: number }) {
+  return <rect x={x} y={y} width={w} height={h} rx={Math.min(w, h) * 0.35} fill={LIGHT} {...line} />;
+}
+
+const foamMattress: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={4} />
+    {[0.3, 0.42, 0.54].map((f) => (
+      <circle key={f} cx={w * 0.3} cy={h * f} r={0.9} fill={palette.detail} />
+    ))}
+    {[0.36, 0.48].map((f) => (
+      <circle key={f} cx={w * 0.7} cy={h * f} r={0.9} fill={palette.detail} />
+    ))}
+    <Pillow x={4} y={4} w={w - 8} h={h * 0.15} />
+    <rect x={2.5} y={h * 0.62} width={w - 5} height={h * 0.38 - 4} rx={3} fill={palette.accent} {...line} />
+    <path d={`M5 ${h * 0.7} H${w - 5}`} stroke={LIGHT} strokeWidth={1} opacity={0.6} />
+  </>
+);
+
+const springBed: Draw = ({ palette }, { w, h }) => (
+  <>
+    <rect x={1.5} y={1.5} width={w - 3} height={h - 3} rx={2} fill="none" stroke={palette.base} strokeWidth={2.4} />
+    <rect x={3.5} y={3.5} width={w - 7} height={h - 7} rx={3} fill={palette.accent} {...line} />
+    <Pillow x={5.5} y={6} w={w - 11} h={h * 0.14} />
+    <rect x={3.5} y={h * 0.5} width={w - 7} height={h * 0.5 - 3.5} rx={3} fill={palette.detail} {...line} />
+    <path d={`M3.5 ${h * 0.58} H${w - 3.5}`} stroke={LIGHT} strokeWidth={1.2} opacity={0.7} />
+  </>
+);
+
+const bunkBed: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={2} />
+    <rect x={4} y={4} width={w - 8} height={h - 8} rx={2} fill={palette.accent} {...line} />
+    <Pillow x={6} y={6.5} w={w - 12} h={h * 0.13} />
+    <rect x={4} y={h * 0.55} width={w - 8} height={h * 0.45 - 4} rx={2} fill={palette.detail} {...line} />
+    {[1.5, w - 5.5].map((x) =>
+      [1.5, h - 5.5].map((y) => <rect key={`${x}-${y}`} x={x} y={y} width={4} height={4} fill={palette.base} {...line} />),
+    )}
+    {[0.3, 0.42, 0.54].map((f) => (
+      <path key={f} d={`M${w - 4} ${h * f} H${w - 1.5}`} stroke={OUTLINE} strokeWidth={1.2} />
+    ))}
+  </>
+);
+
+const kingBed: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={3} />
+    <rect x={1.5} y={1.5} width={w - 3} height={8} rx={3} fill={palette.base} {...line} />
+    <rect x={4} y={10} width={w - 8} height={h - 14} rx={3} fill={palette.accent} {...line} />
+    <Pillow x={7} y={13} w={w / 2 - 9} h={h * 0.13} />
+    <Pillow x={w / 2 + 2} y={13} w={w / 2 - 9} h={h * 0.13} />
+    <rect x={4} y={h * 0.48} width={w - 8} height={h * 0.52 - 4} rx={3} fill={palette.detail} {...line} />
+    <path d={`M4 ${h * 0.56} H${w - 4}`} stroke={LIGHT} strokeWidth={1.6} opacity={0.8} />
+  </>
+);
+
+const slidingWardrobe: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.accent} r={1.5} />
+    {/* Two sliding doors on their tracks, the front one overlapping the back. */}
+    <rect x={3} y={h * 0.38} width={w * 0.55} height={h * 0.5} fill={palette.base} {...line} />
+    <rect x={w * 0.42} y={h * 0.5} width={w * 0.58 - 3} height={h * 0.42} fill={palette.base} {...line} />
+    <path d={`M${w * 0.36} ${h * 0.48} V${h * 0.78} M${w * 0.64} ${h * 0.6} V${h * 0.84}`} stroke={palette.detail} strokeWidth={1.6} strokeLinecap="round" />
+    <path d={`M3 ${h * 0.3} H${w - 3}`} stroke={palette.detail} strokeWidth={0.8} opacity={0.5} />
+  </>
+);
+
+const queenBed: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={4} />
+    <path d={`M2 11 Q${w / 2} 0 ${w - 2} 11 Z`} fill={palette.base} {...line} />
+    {[0.25, 0.5, 0.75].map((f) => (
+      <circle key={f} cx={w * f} cy={6.5} r={1} fill={OUTLINE} opacity={0.45} />
+    ))}
+    <rect x={4.5} y={11} width={w - 9} height={h - 15} rx={3} fill={palette.accent} {...line} />
+    <Pillow x={7} y={14} w={w / 2 - 9} h={h * 0.13} />
+    <Pillow x={w / 2 + 2} y={14} w={w / 2 - 9} h={h * 0.13} />
+    <rect x={4.5} y={h * 0.5} width={w - 9} height={h * 0.5 - 4} rx={3} fill={palette.detail} {...line} />
+    <rect x={4.5} y={h * 0.5} width={w - 9} height={5} fill={LIGHT} opacity={0.8} />
+  </>
+);
+
+const fourPoster: Draw = ({ palette }, { w, h }) => (
+  <>
+    <rect x={4} y={4} width={w - 8} height={h - 8} rx={2} fill={palette.accent} {...line} />
+    <Pillow x={8} y={8} w={w / 2 - 10} h={h * 0.13} />
+    <Pillow x={w / 2 + 2} y={8} w={w / 2 - 10} h={h * 0.13} />
+    <rect x={4} y={h * 0.5} width={w - 8} height={h * 0.5 - 4} rx={2} fill={palette.detail} {...line} />
+    <rect x={4} y={4} width={w - 8} height={h - 8} rx={2} fill="none" stroke={LIGHT} strokeWidth={1.6} strokeDasharray="3 2" opacity={0.9} />
+    {[4, w - 4].map((x) => [4, h - 4].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r={3.2} fill={palette.base} {...line} />))}
+  </>
+);
+
+const walkInCloset: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={2} />
+    <rect x={4} y={3.5} width={w - 8} height={h - 7} rx={1.5} fill={palette.accent} opacity={0.95} />
+    <path d={`M5 7 H${w - 5}`} stroke={palette.detail} strokeWidth={1.4} />
+    {Array.from({ length: Math.floor((w - 12) / 4) }, (_, i) => (
+      <rect key={i} x={7 + i * 4} y={8} width={2.6} height={h - 14} rx={1} fill={['#B5523B', '#3D5A99', '#2E7D5B', '#D29A3A', '#6F5E92'][i % 5]} />
+    ))}
+    <rect x={4} y={3.5} width={w - 8} height={h - 7} rx={1.5} fill="none" stroke={palette.detail} strokeWidth={1} />
+  </>
+);
+
+const roundBed: Draw = ({ palette }, { w, h }) => {
+  const r = Math.min(w, h) / 2 - 1.5;
+  const cx = w / 2;
+  const cy = h / 2;
+  const inner = r - 4;
+  return (
+    <>
+      <circle cx={cx} cy={cy} r={r} fill={palette.base} {...line} />
+      <circle cx={cx} cy={cy} r={inner} fill={palette.accent} {...line} />
+      <path d={`M${cx - inner} ${cy + 2} A${inner} ${inner} 0 0 0 ${cx + inner} ${cy + 2} Z`} fill={palette.detail} {...line} />
+      <ellipse cx={cx - 7} cy={cy - r * 0.45} rx={6} ry={3.6} fill={LIGHT} {...line} />
+      <ellipse cx={cx + 7} cy={cy - r * 0.45} rx={6} ry={3.6} fill={LIGHT} {...line} />
+      <path d={`M${cx + r - 1} ${cy - 6} A${r - 1} ${r - 1} 0 0 1 ${cx + r - 6} ${cy + 10}`} fill="none" stroke={palette.detail} strokeWidth={1.4} />
+    </>
+  );
+};
+
+const coolerBox: Draw = ({ palette }, { w, h }) => (
+  <>
+    <rect x={3} y={4} width={w - 6} height={h - 8} rx={4} fill={palette.base} {...line} />
+    <rect x={5} y={6} width={w - 10} height={h - 12} rx={3} fill={palette.accent} {...line} />
+    <rect x={w / 2 - 5} y={h / 2 - 1.5} width={10} height={3} rx={1.5} fill={palette.base} />
+  </>
+);
+
+const keroseneStove: Draw = ({ palette }, { w, h }) => (
+  <>
+    <circle cx={w / 2} cy={h / 2} r={Math.min(w, h) / 2 - 2} fill={palette.base} {...line} />
+    <circle cx={w / 2} cy={h / 2} r={6} fill={palette.accent} {...line} />
+    {Array.from({ length: 8 }, (_, i) => {
+      const a = (i / 8) * Math.PI * 2;
+      return <circle key={i} cx={w / 2 + Math.cos(a) * 4} cy={h / 2 + Math.sin(a) * 4} r={0.9} fill={palette.detail} />;
+    })}
+    <path d={`M${w / 2 - 8} ${h / 2} H${w / 2 - 6} M${w / 2 + 6} ${h / 2} H${w / 2 + 8}`} stroke={OUTLINE} strokeWidth={1.4} />
+  </>
+);
+
+const kitchenCounter: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={1.5} />
+    <rect x={1.5} y={h - 5} width={w - 3} height={3.5} fill={palette.accent} {...line} />
+    <rect x={5} y={6} width={10} height={7} rx={1.5} fill={palette.detail} {...line} />
+    <circle cx={w - 6.5} cy={8} r={2} fill={LIGHT} {...line} />
+  </>
+);
+
+const airFryer: Draw = ({ palette }, { w, h }) => (
+  <>
+    <rect x={3.5} y={3.5} width={w - 7} height={h - 7} rx={6} fill={palette.base} {...line} />
+    <circle cx={w / 2} cy={h / 2 - 1} r={4.5} fill="none" stroke={palette.accent} strokeWidth={1.4} />
+    <circle cx={w / 2} cy={h / 2 - 1} r={1.4} fill={palette.accent} />
+    <rect x={w / 2 - 4} y={h - 7} width={8} height={2} rx={1} fill={palette.accent} />
+  </>
+);
+
+const chestFreezer: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={2} />
+    <path d={`M3 ${h - 7} H${w - 3}`} stroke={palette.accent} strokeWidth={1.2} />
+    <rect x={w / 2 - 4} y={h - 6} width={8} height={2.2} rx={1} fill={palette.accent} />
+    <circle cx={5.5} cy={5.5} r={1.2} fill={palette.detail} />
+  </>
+);
+
+const marbleIsland: Draw = ({ palette }, { w, h }) => (
+  <>
+    <rect x={2} y={2} width={w - 4} height={h - 4} rx={2} fill={palette.base} stroke={palette.detail} strokeWidth={1.6} />
+    <rect x={2} y={2} width={w - 4} height={h - 4} rx={2} fill="none" {...line} />
+    <path
+      d={`M4 ${h * 0.35} C${w * 0.35} ${h * 0.2}, ${w * 0.55} ${h * 0.6}, ${w - 4} ${h * 0.45} M${w * 0.3} ${h - 4} C${w * 0.4} ${h * 0.7}, ${w * 0.6} ${h * 0.75}, ${w * 0.7} ${h * 0.55}`}
+      fill="none"
+      stroke={palette.accent}
+      strokeWidth={0.8}
+    />
+  </>
+);
+
+const BURNERS: [number, number, number][] = [
+  [0.3, 0.3, 3.2],
+  [0.7, 0.3, 3.2],
+  [0.3, 0.68, 3.2],
+  [0.7, 0.68, 3.2],
+  [0.5, 0.49, 2.2],
+];
+
+const cookerOven: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={1.5} />
+    {BURNERS.map(([fx, fy, r]) => (
+      <circle key={`${fx}-${fy}`} cx={w * fx} cy={h * fy} r={r} fill={palette.accent} stroke={palette.detail} strokeWidth={0.8} />
+    ))}
+    <path d={`M4 ${h - 2.8} H${w - 4}`} stroke={palette.accent} strokeWidth={1.2} strokeDasharray="1.5 2.5" />
+  </>
+);
+
+const bucketBowl: Draw = ({ palette }, { w, h }) => (
+  <>
+    <circle cx={w * 0.42} cy={h * 0.45} r={7.5} fill={palette.base} {...line} />
+    <circle cx={w * 0.42} cy={h * 0.45} r={5.2} fill="#9CC3EE" />
+    <path d={`M${w * 0.42 - 7.5} ${h * 0.45} A7.5 7.5 0 0 1 ${w * 0.42 + 7.5} ${h * 0.45}`} fill="none" stroke={OUTLINE} strokeWidth={0.9} opacity={0.6} />
+    <circle cx={w * 0.74} cy={h * 0.76} r={4} fill={palette.accent} {...line} />
+  </>
+);
+
+const waterDrum: Draw = ({ palette }, { w, h }) => (
+  <>
+    <circle cx={w * 0.42} cy={h * 0.44} r={8.5} fill={palette.base} {...line} />
+    <circle cx={w * 0.42} cy={h * 0.44} r={3} fill="#24498A" />
+    <rect x={w * 0.62} y={h * 0.6} width={7} height={8} rx={1.5} fill={palette.accent} {...line} />
+    <rect x={w * 0.66} y={h * 0.56} width={2.4} height={2.4} fill={palette.accent} stroke={OUTLINE} strokeWidth={0.8} />
+  </>
+);
+
+const wcToilet: Draw = ({ palette }, { w, h }) => (
+  <>
+    <rect x={4} y={2} width={w - 8} height={6} rx={1.5} fill={palette.base} {...line} />
+    <ellipse cx={w / 2} cy={h * 0.6} rx={7} ry={8.5} fill={palette.base} {...line} />
+    <ellipse cx={w / 2} cy={h * 0.62} rx={4} ry={5.2} fill={palette.accent} />
+    <circle cx={w - 7} cy={5} r={1} fill={palette.accent} />
+  </>
+);
+
+const rainShower: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={2} />
+    <circle cx={w / 2} cy={h / 2} r={6.5} fill={palette.accent} stroke={OUTLINE} strokeWidth={0.9} />
+    {Array.from({ length: 7 }, (_, i) => {
+      const a = (i / 7) * Math.PI * 2;
+      return <circle key={i} cx={w / 2 + Math.cos(a) * 3.6} cy={h / 2 + Math.sin(a) * 3.6} r={0.7} fill={palette.detail} />;
+    })}
+    <circle cx={w / 2} cy={h / 2} r={0.9} fill={palette.detail} />
+  </>
+);
+
+const bathtub: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={5} />
+    <rect x={5} y={4.5} width={w - 10} height={h - 9} rx={(h - 9) * 0.45} fill={palette.accent} stroke={OUTLINE} strokeWidth={0.9} />
+    <circle cx={w * 0.78} cy={h / 2} r={1.2} fill={OUTLINE} opacity={0.5} />
+    <rect x={w / 2 - 2} y={1.5} width={4} height={4} rx={1} fill="#9AA3AE" stroke={OUTLINE} strokeWidth={0.8} />
+  </>
+);
+
+const washingMachine: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={2} />
+    <rect x={3.5} y={3.5} width={w - 7} height={4} rx={1} fill={palette.detail} opacity={0.15} />
+    <circle cx={w - 7} cy={5.5} r={1.1} fill={palette.detail} />
+    <circle cx={w / 2} cy={h * 0.6} r={6} fill={palette.accent} stroke={palette.detail} strokeWidth={1.4} />
+    <path d={`M${w / 2 - 3} ${h * 0.58} Q${w / 2} ${h * 0.5} ${w / 2 + 3} ${h * 0.58}`} fill="none" stroke={LIGHT} strokeWidth={1} />
+  </>
+);
+
+const BUBBLES: [number, number, number][] = [
+  [0.35, 0.35, 1.6],
+  [0.6, 0.42, 1.1],
+  [0.45, 0.6, 1.3],
+  [0.66, 0.66, 1.8],
+  [0.3, 0.68, 0.9],
+];
+
+const jacuzzi: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.base} r={6} />
+    <rect x={6} y={6} width={w - 12} height={h - 12} rx={(w - 12) * 0.3} fill={palette.accent} stroke={OUTLINE} strokeWidth={0.9} />
+    {BUBBLES.map(([fx, fy, r]) => (
+      <circle key={`${fx}-${fy}`} cx={w * fx} cy={h * fy} r={r} fill={palette.detail} opacity={0.85} />
+    ))}
+    <circle cx={6} cy={h / 2} r={1.4} fill="#9AA3AE" />
+    <circle cx={w - 6} cy={h / 2} r={1.4} fill="#9AA3AE" />
+    <circle cx={w / 2} cy={6} r={1.4} fill="#9AA3AE" />
+  </>
+);
+
+const loungeArmchair: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.accent} r={5} />
+    <rect x={5} y={7} width={w - 10} height={h - 10} rx={3} fill={palette.base} {...line} />
+  </>
+);
+
+const velvetSofa: Draw = ({ palette }, { w, h }) => (
+  <>
+    <Body w={w} h={h} fill={palette.accent} r={5} />
+    <rect x={7} y={h * 0.32} width={(w - 14) / 2} height={h * 0.6} rx={3} fill={palette.base} {...line} />
+    <rect x={w / 2} y={h * 0.32} width={(w - 14) / 2} height={h * 0.6} rx={3} fill={palette.base} {...line} />
+    <path d={`M10 ${h * 0.22} H${w - 10}`} stroke={LIGHT} strokeWidth={1} opacity={0.35} />
+  </>
+);
+
+const beanBag: Draw = ({ palette }, { w, h }) => (
+  <>
+    <path
+      d={`M${w * 0.5} 2.5 C${w * 0.9} 2.5, ${w - 2} ${h * 0.35}, ${w - 3} ${h * 0.6} C${w - 4} ${h - 2}, ${w * 0.25} ${h - 2}, 3 ${h * 0.7} C2 ${h * 0.4}, ${w * 0.2} 2.5, ${w * 0.5} 2.5 Z`}
+      fill={palette.base}
+      {...line}
+    />
+    <ellipse cx={w * 0.52} cy={h * 0.55} rx={5} ry={4} fill={palette.accent} opacity={0.75} />
+  </>
+);
+
+/** Confirmed items by catalogue id, with the palette each is drawn in. */
+const VERIFIED_ART: Record<string, { draw: Draw; palette: Palette }> = {
+  'foam-mattress': { draw: foamMattress, palette: { base: '#E3D9BF', accent: '#4F6FA8', detail: '#B9AC88' } },
+  'spring-bed': { draw: springBed, palette: { base: '#3B4252', accent: '#C9D6EA', detail: '#5B78B5' } },
+  'bunk-bed': { draw: bunkBed, palette: { base: '#8A5A34', accent: '#D7E0F0', detail: '#B5523B' } },
+  'lekki-king-bed': { draw: kingBed, palette: { base: '#2B2F3A', accent: '#F4F0E8', detail: '#2F6B5E' } },
+  'sliding-wardrobe': { draw: slidingWardrobe, palette: { base: '#E8E2D6', accent: '#B9AE98', detail: '#3A3F47' } },
+  'upholstered-queen-bed': { draw: queenBed, palette: { base: '#C7A6B8', accent: '#F4F0E8', detail: '#E7C9CF' } },
+  'four-poster-canopy-bed': { draw: fourPoster, palette: { base: '#5A3A22', accent: '#F4F0E8', detail: '#C9A15A' } },
+  'walk-in-closet-display': { draw: walkInCloset, palette: { base: '#2B2F3A', accent: '#F4F0E8', detail: '#D29A3A' } },
+  'rotating-round-bed': { draw: roundBed, palette: { base: '#3A2E5C', accent: '#F4F0E8', detail: '#C9A15A' } },
+  'cooler-box': { draw: coolerBox, palette: { base: '#2F5EA8', accent: '#F2F2F2' } },
+  'kerosene-stove': { draw: keroseneStove, palette: { base: '#3B6E8F', accent: '#2A2E38', detail: '#E0B32E' } },
+  'kitchen-counter': { draw: kitchenCounter, palette: { base: '#D9CBB2', accent: '#8A6440', detail: '#C49A6C' } },
+  'air-fryer': { draw: airFryer, palette: { base: '#22262E', accent: '#D29A3A' } },
+  'chest-deep-freezer': { draw: chestFreezer, palette: { base: '#EEF1F4', accent: '#9AA3AE', detail: '#2E7D5B' } },
+  'marble-kitchen-island': { draw: marbleIsland, palette: { base: '#F2F0EC', accent: '#C9C5BC', detail: '#D29A3A' } },
+  'five-burner-cooker-oven': { draw: cookerOven, palette: { base: '#C8CCD2', accent: '#2A2E38', detail: '#E7EAEE' } },
+  'bucket-and-bowl': { draw: bucketBowl, palette: { base: '#3D7DD8', accent: '#F2B33D' } },
+  'water-drum-jerrycans': { draw: waterDrum, palette: { base: '#2F5EA8', accent: '#E0B32E' } },
+  'wc-toilet': { draw: wcToilet, palette: { base: '#F7F7F4', accent: '#C9D3DA' } },
+  'rain-shower': { draw: rainShower, palette: { base: '#DDE7EC', accent: '#9DB7C9', detail: '#5D6B78' } },
+  bathtub: { draw: bathtub, palette: { base: '#F7F7F4', accent: '#BFDCE6' } },
+  'washing-machine': { draw: washingMachine, palette: { base: '#F2F3F5', accent: '#9DB7C9', detail: '#2A2E38' } },
+  jacuzzi: { draw: jacuzzi, palette: { base: '#E8E2D6', accent: '#7FC4D9', detail: '#F7F7F4' } },
+  'plastic-chair': { draw: plasticchair, palette: { base: '#F7F6F1', accent: '#9AA0AA' } },
+  'standing-fan': { draw: fan, palette: { base: '#E9EBEF', accent: '#3D5A99' } },
+  'dining-table': { draw: dining, palette: { base: '#8A5A34', accent: '#C9A15A' } },
+  'lounge-armchair': { draw: loungeArmchair, palette: { base: '#A0714A', accent: '#7C5534' } },
+  'velvet-sofa': { draw: velvetSofa, palette: { base: '#8A3354', accent: '#6A2440' } },
+  'bean-bag': { draw: beanBag, palette: { base: '#D98E3A', accent: '#B36F28' } },
+};
+
 /** A plain block for anything without a drawing yet. */
 const generic: Draw = ({ palette, initial }, { w, h }) => (
   <>
@@ -597,6 +940,8 @@ const CATEGORY_PALETTES: Record<CatalogueItem['category'], Palette> = {
   Pets: { base: '#B5835A', accent: '#5C3920' },
   Luxury: { base: '#C9A15A', accent: '#4B3F72', detail: '#F4F0E8' },
 };
+
+const PLANT_PALETTE: Palette = { base: '#3F8F5E', accent: '#B5523B' };
 
 /** Picks a drawing for an item from what it is and what it's called. */
 function kindFor(item: CatalogueItem): SpriteKind {
@@ -640,6 +985,10 @@ function kindFor(item: CatalogueItem): SpriteKind {
 }
 
 export function Sprite({ item, w, h }: { item: CatalogueItem; w: number; h: number }) {
-  const look: Look = { palette: CATEGORY_PALETTES[item.category], initial: item.name.charAt(0) };
-  return drawings[kindFor(item)](look, { w, h });
+  const initial = item.name.charAt(0);
+  const art = item.verified ? VERIFIED_ART[item.id] : undefined;
+  if (art) return art.draw({ palette: art.palette, initial }, { w, h });
+  const kind = kindFor(item);
+  const palette = kind === 'plant' ? PLANT_PALETTE : CATEGORY_PALETTES[item.category];
+  return drawings[kind]({ palette, initial }, { w, h });
 }

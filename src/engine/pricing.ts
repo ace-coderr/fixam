@@ -57,17 +57,19 @@ export function createPricing(multiplier: number): Pricing {
 }
 
 /**
- * Fixam's own charge for designing a room. It depends on the room's size and
- * the kind of job, never on what the furniture costs: Fixam takes no margin
- * on furniture. Doing the buying and placing costs more than a plan alone.
+ * Fixam's own charge for designing a room: a flat band by room area, at
+ * starter prices, scaled by the player's multiplier. It never depends on what
+ * the furniture costs: Fixam takes no margin on furniture. Charged when the
+ * job completes. Doing the buying and placing costs more than a plan alone.
  */
-const FEE_BASE: Record<ExecutionMode, { flat: number; perCell: number }> = {
-  'full-service': { flat: 1_500, perCell: 30 },
-  'plan-only': { flat: 500, perCell: 10 },
-};
+const FEE_BANDS: { maxCells: number; fee: Record<ExecutionMode, number> }[] = [
+  { maxCells: 64, fee: { 'full-service': 3_000, 'plan-only': 1_000 } },
+  { maxCells: 121, fee: { 'full-service': 6_000, 'plan-only': 2_000 } },
+  { maxCells: Infinity, fee: { 'full-service': 10_000, 'plan-only': 3_500 } },
+];
 
 export function serviceFee(room: Room, mode: ExecutionMode, pricing: Pricing): number {
-  const { flat, perCell } = FEE_BASE[mode];
-  const base = flat + perCell * room.widthCells * room.heightCells;
-  return Math.round(pricing.scale(base) / 100) * 100;
+  const cells = room.widthCells * room.heightCells;
+  const band = FEE_BANDS.find((b) => cells <= b.maxCells) ?? (FEE_BANDS[FEE_BANDS.length - 1] as (typeof FEE_BANDS)[number]);
+  return pricing.scale(band.fee[mode]);
 }

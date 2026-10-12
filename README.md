@@ -1,20 +1,27 @@
 # Fixam
 
-Fixam furnishes your home in **Lagos Life**, one room at a time. Open it from
-your in-game phone, pick a room, say how you want it to feel and what you can
-spend, and Fixam plans it: it picks pieces from the game's own shop, lays them
-out, and hands you a receipt. Pay with in-game naira and the room is fixed.
+Fixam furnishes your home in **Lagos Life**, one room at a time. It's an app on
+the in-game phone, and a product of Ace: when you open it, your Ace worker, a
+decorator Ace sends round, greets you and does the job. Pick a room, say how
+you want it to feel and what you can spend, and they plan it with pieces from
+the game's own shop, lay them out, and hand you a receipt. Pay with in-game
+naira and the room is fixed.
 
 This release ships one module, **Arrange**:
 
-1. Describe a vibe ("soft life Lekki", "corper's self-con", "owambe-ready
-   parlour", or your own words) and set a budget.
-2. Fixam makes a plan: furniture that fits the vibe and the budget, placed on a
-   floor plan of your room.
-3. Check the plan and its receipt. Try another layout if you want the same
-   pieces arranged differently. Nothing is charged yet.
-4. Pay to fix it. The layout is saved to your flat and the receipt is stamped
-   paid.
+1. **Home.** Your properties, with their size and which one you live in.
+2. **Rooms.** The rooms of that property, their size, type, and whether they're
+   furnished. A room without a purpose asks what it's for first.
+3. **Brief.** A vibe ("soft life Lekki", "corper's self-con", "owambe-ready
+   parlour", or your own words), a budget, and an optional leaning: masculine,
+   feminine or neutral. It's always your choice and starts unpicked; skip it and
+   the plan stays neutral.
+4. **Plan.** The room from above, with the floor and paint it will get, and a
+   receipt. Try another layout to see the same pieces arranged differently.
+   Nothing is charged yet.
+5. **Fix.** With full service, your Ace worker buys and places everything and the
+   room is fixed. With a plan only, you get numbered steps in placing order,
+   each naming the piece, its cell and its rotation, to tick off as you go.
 
 Pieces waiting in your storage go in first and show as ₦0, already yours.
 Stored pieces that clash with the style are suggested for sale at the game's
@@ -23,7 +30,17 @@ Stored pieces that clash with the style are suggested for sale at the game's
 When the game lets Fixam buy and place for you, it does the whole job, paying
 the shop from your own wallet. Otherwise you get the plan as a step-by-step
 list, in placing order, with the rotation for each piece. Either way Fixam
-charges a service fee for the job and takes no margin on furniture.
+charges a service fee for the job, a flat amount by room size, and takes no
+margin on furniture:
+
+| Room area        | Full service | Plan only |
+| ---------------- | ------------ | --------- |
+| Up to 64 cells   | ₦3,000       | ₦1,000    |
+| Up to 121 cells  | ₦6,000       | ₦2,000    |
+| Larger           | ₦10,000      | ₦3,500    |
+
+Like every price, the fee is multiplied by the player's price tier. It's
+charged when the job completes.
 
 ## Running it
 
@@ -38,6 +55,10 @@ Then open the address Vite prints (usually http://localhost:5173). The app is
 built for a phone-sized frame: it centres itself at up to 440px wide, so a
 narrow browser window or your browser's device toolbar shows it as players will
 see it.
+
+The mock game starts as a starter-tier player who lets Fixam buy and place. Add
+`?mock=mid` or `?mock=big-man` to the address for another price tier, and
+`&mode=plan` (or `?mode=plan`) for a game that only allows a plan.
 
 | Command             | What it does                                  |
 | ------------------- | --------------------------------------------- |
@@ -125,7 +146,7 @@ cells, and a type: parlour, bedroom, kitchen, bath, study, yard or unassigned.
 src/
   adapter/      game interface, mock game and its seed catalogue, active adapter
   engine/       pricing, room rules, vibe reading, selection, placement, execution (no React)
-  components/   floor plan, item drawings, receipt
+  components/   floor plan, item and finish drawings, the Ace worker, receipt, shared UI
   modules/      one folder per module; registry.ts maps routes to modules
   shell/        game data provider and hash routing
   styles/       global styles and design tokens

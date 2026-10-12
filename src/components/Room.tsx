@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from 'react';
 import type { CatalogueItem, Opening, PlacedItem, Room as RoomSpec } from '../adapter/types';
+import { FloorPattern, isDarkFloor, paintColour } from './finishes';
 import { Sprite } from './sprites';
 
 /** SVG units per grid cell, and the wall thickness drawn around the floor. */
@@ -11,6 +12,11 @@ interface RoomProps {
   layout: PlacedItem[];
   /** Catalogue items by id, as served by the game. */
   items: ReadonlyMap<string, CatalogueItem>;
+  /** Floor finish and wall paint to show, by catalogue id. */
+  floor?: string | null;
+  wallPaint?: string | null;
+  /** Number the columns and rows, for place-it-yourself steps. */
+  showGrid?: boolean;
   /** Changing this replays the placement sequence. */
   runKey: string | number;
   selectedUid: string | null;
@@ -81,14 +87,20 @@ function Window({ room, window }: { room: RoomSpec; window: Opening }) {
 }
 
 function describe(room: RoomSpec, layout: PlacedItem[], items: ReadonlyMap<string, CatalogueItem>): string {
-  const size = `${room.widthCells / 2}m by ${room.heightCells / 2}m`;
+  const size = `${room.widthCells}×${room.heightCells}`;
   if (layout.length === 0) return `Floor plan of an empty room, ${size}.`;
   const names = layout.map((p) => (items.get(p.itemId)?.name ?? 'item').toLowerCase());
   return `Floor plan, ${size}, with ${names.length} items: ${names.join(', ')}.`;
 }
 
-export function Room({ room, layout, items, runKey, selectedUid, onSelect, overlay }: RoomProps) {
-  const gridId = `grid-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+export function Room({ room, layout, items, floor, wallPaint, showGrid = false, runKey, selectedUid, onSelect, overlay }: RoomProps) {
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const gridId = `grid-${uid}`;
+  const floorId = `floor-${uid}`;
+  const floorItem = floor ? items.get(floor) : undefined;
+  const wallColour = paintColour(wallPaint ? items.get(wallPaint) : undefined) ?? 'var(--wall)';
+  const darkFloor = isDarkFloor(floorItem);
+  const margin = showGrid ? 12 : 0;
   const W = room.widthCells * CELL;
   const H = room.heightCells * CELL;
 
@@ -102,20 +114,35 @@ export function Room({ room, layout, items, runKey, selectedUid, onSelect, overl
   return (
     <div className="plan">
       <svg
-        viewBox={`${-WALL} ${-WALL} ${W + WALL * 2} ${H + WALL * 2}`}
+        viewBox={`${-WALL - margin} ${-WALL - margin} ${W + WALL * 2 + margin} ${H + WALL * 2 + margin}`}
         role="img"
         aria-label={describe(room, layout, items)}
         onClick={() => onSelect(null)}
       >
         <defs>
           <pattern id={gridId} width={CELL} height={CELL} patternUnits="userSpaceOnUse">
-            <path d={`M${CELL} 0 H0 V${CELL}`} fill="none" stroke="var(--plan-grid)" strokeWidth={0.6} />
+            <path d={`M${CELL} 0 H0 V${CELL}`} fill="none" stroke={darkFloor ? 'rgba(237, 231, 218, 0.1)' : 'var(--plan-grid)'} strokeWidth={0.6} />
           </pattern>
+          <FloorPattern id={floorId} item={floorItem} />
         </defs>
 
-        <rect x={-WALL} y={-WALL} width={W + WALL * 2} height={H + WALL * 2} rx={3} fill="var(--wall)" />
-        <rect x={0} y={0} width={W} height={H} fill="var(--floor)" />
+        <rect x={-WALL} y={-WALL} width={W + WALL * 2} height={H + WALL * 2} rx={3} fill={wallColour} stroke="var(--plan-ink)" strokeWidth={1.2} />
+        <rect x={0} y={0} width={W} height={H} fill={floorItem ? `url(#${floorId})` : 'var(--floor)'} />
         <rect x={0} y={0} width={W} height={H} fill={`url(#${gridId})`} />
+        {showGrid && (
+          <g fill="var(--chalk-dim)" fontSize={8} fontWeight={600} textAnchor="middle" aria-hidden="true">
+            {Array.from({ length: room.widthCells }, (_, c) => (
+              <text key={`c${c}`} x={c * CELL + CELL / 2} y={-WALL - 4}>
+                {c + 1}
+              </text>
+            ))}
+            {Array.from({ length: room.heightCells }, (_, r) => (
+              <text key={`r${r}`} x={-WALL - 6} y={r * CELL + CELL / 2 + 3}>
+                {r + 1}
+              </text>
+            ))}
+          </g>
+        )}
         {room.windows.map((window, i) => (
           <Window key={`window-${i}`} room={room} window={window} />
         ))}

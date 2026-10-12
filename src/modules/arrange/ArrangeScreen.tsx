@@ -1,306 +1,348 @@
-import { useRef, useState, type FormEvent } from 'react';
-import { Receipt } from '../../components/Receipt';
-import { Room } from '../../components/Room';
-import { arrange, rearrange, type Arrangement } from '../../engine/arrange';
+import { useEffect, useRef, useState } from 'react';
+import type { House, Property, Room, RoomType } from '../../adapter/types';
+import { Header } from '../../components/ui';
+import { arrange, executionMode, rearrange, type Arrangement, type PlanStep } from '../../engine/arrange';
 import { executePlan, type ExecuteOutcome } from '../../engine/execute';
-import { vibePresets, type StyleTag } from '../../engine/vibes';
-import { groupDigits, naira, parseNaira } from '../../lib/naira';
+import { naira, parseNaira } from '../../lib/naira';
 import { useGame } from '../../shell/GameContext';
+import {
+  BriefScreen,
+  FixedScreen,
+  HomeScreen,
+  JobScreen,
+  PlanScreen,
+  PurposeScreen,
+  RoomsScreen,
+  StepsScreen,
+  type Brief,
+  type Stage,
+} from './screens';
 
-type Phase = 'compose' | 'working' | 'result' | 'paying' | 'fixed';
+type Step = 'home' | 'rooms' | 'purpose' | 'brief' | 'plan' | 'execute';
 
-const tagWords: Partial<Record<StyleTag, string>> = {
-  luxe: 'luxe',
-  budget: 'thrifty',
-  starter: 'the basics',
-  minimal: 'clean lines',
-  comfort: 'comfort',
-  traditional: 'classic',
-  family: 'family',
-  hosting: 'hosting',
-  party: 'party',
-  food: 'food',
-  work: 'work',
-  tech: 'tech',
-  study: 'study',
-  power: 'backup power',
-  cooling: 'staying cool',
-  decor: 'decor',
-  green: 'plants',
-};
+type Job =
+  | { status: 'idle' }
+  | { status: 'running'; stage: number }
+  | { status: 'failed'; stage: number; message: string; canRetry: boolean; charged: boolean }
+  | { status: 'fixed' }
+  | { status: 'steps'; steps: PlanStep[]; done: ReadonlySet<number> };
 
-const MAX_BUDGET_DIGITS = 9;
+/** The suggested budgets are for a 6×6 room at starter prices; scale to this room and player. */
+const REFERENCE_CELLS = 36;
+/** A sensible opening budget for a room before any vibe is picked, at starter prices for 6×6. */
+const OPENING_BUDGET = 60_000;
 
-function prefersReducedMotion(): boolean {
+function reducedMotion(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function groupDigits(n: number): string {
+  return new Intl.NumberFormat('en-NG', { maximumFractionDigits: 0 }).format(n);
 }
 
 export default function ArrangeScreen() {
   const game = useGame();
-  const planRef = useRef<HTMLDivElement>(null);
-
-  const [vibe, setVibe] = useState('');
-  const [budgetText, setBudgetText] = useState(groupDigits(150_000));
-  const [budgetTouched, setBudgetTouched] = useState(false);
-  const [phase, setPhase] = useState<Phase>('compose');
+  const [step, setStep] = useState<Step>('home');
+  const [property, setProperty] = useState<Property | null>(null);
+  const [house, setHouse] = useState<House | null>(null);
+  const [houseError, setHouseError] = useState<string | null>(null);
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const [purposes, setPurposes] = useState<Record<string, RoomType>>({});
+  const [purposeDraft, setPurposeDraft] = useState<RoomType | null>(null);
+  const [brief, setBrief] = useState<Brief>({ vibe: '', budgetText: '', budgetTouched: false, leaning: null });
+  const [briefError, setBriefError] = useState<string | null>(null);
   const [arrangement, setArrangement] = useState<Arrangement | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [measuring, setMeasuring] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
-  /** Charged but not yet saved: the next tap retries the save, never the charge. */
-  const [awaitingSave, setAwaitingSave] = useState(false);
+  const [job, setJob] = useState<Job>({ status: 'idle' });
   const retryRef = useRef<(() => Promise<ExecuteOutcome>) | null>(null);
 
-  if (game.status !== 'ready') return null;
-  const { room, wallet, storage, catalogue, catalogueById, pricing, capabilities } = game;
-  const budget = parseNaira(budgetText);
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [step]);
 
-  const showPlan = () => {
-    planRef.current?.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+  if (game.status !== 'ready') return null;
+  const { player, properties, pricing, wallet, capabilities, catalogue, catalogueById, storage } = game;
+  const mode = executionMode(capabilities);
+
+  const baseRoom = house && roomId ? [...house.rooms, house.yard].find((r) => r.id === roomId) ?? null : null;
+  const purpose = roomId ? purposes[roomId] : undefined;
+  const room: Room | null = baseRoom && baseRoom.type === 'unassigned' && purpose ? { ...baseRoom, type: purpose } : baseRoom;
+  const budget = parseNaira(brief.budgetText);
+  const scaleBudget = (base: number, r: Room | null = room) => {
+    const cells = r ? r.widthCells * r.heightCells : REFERENCE_CELLS;
+    return Math.round(pricing.scale((base * cells) / REFERENCE_CELLS) / 1_000) * 1_000;
   };
 
-  const fix = async (event: FormEvent) => {
-    event.preventDefault();
-    if (phase === 'working') return;
-    setError(null);
-    if (!vibe.trim()) {
-      setError('Describe a vibe, or tap one of the suggestions.');
+  const loadHouse = async (p: Property) => {
+    setHouse(null);
+    setHouseError(null);
+    try {
+      setHouse(await game.adapter.getHouse(p.id));
+    } catch {
+      setHouseError('Couldn’t open this house from the game. Check your connection and try again.');
+    }
+  };
+
+  // Navigation ------------------------------------------------------------------
+
+  const openProperty = (p: Property) => {
+    setProperty(p);
+    setStep('rooms');
+    void loadHouse(p);
+  };
+
+  const pickRoom = (r: Room) => {
+    setRoomId(r.id);
+    setArrangement(null);
+    setSelectedUid(null);
+    setBriefError(null);
+    setPlanError(null);
+    setJob({ status: 'idle' });
+    setBrief((b) => ({ ...b, budgetText: b.budgetTouched ? b.budgetText : groupDigits(scaleBudget(OPENING_BUDGET, r)) }));
+    if (r.type === 'unassigned' && !purposes[r.id]) {
+      setPurposeDraft(null);
+      setStep('purpose');
+    } else {
+      setStep('brief');
+    }
+  };
+
+  const goHome = async () => {
+    setStep('home');
+    setArrangement(null);
+    setJob({ status: 'idle' });
+    retryRef.current = null;
+    await game.refresh();
+    if (property) void loadHouse(property);
+  };
+
+  const back = (() => {
+    switch (step) {
+      case 'home':
+        return undefined;
+      case 'rooms':
+        return () => setStep('home');
+      case 'purpose':
+        return () => setStep('rooms');
+      case 'brief':
+        return () => setStep(baseRoom?.type === 'unassigned' ? 'purpose' : 'rooms');
+      case 'plan':
+        return measuring ? undefined : () => setStep('brief');
+      case 'execute':
+        if (job.status === 'running') return undefined;
+        if (job.status === 'failed' && !job.charged) return () => setStep('plan');
+        return () => void goHome();
+    }
+  })();
+
+  // Planning --------------------------------------------------------------------
+
+  const makePlan = async () => {
+    if (!room) return;
+    setBriefError(null);
+    if (!brief.vibe.trim()) {
+      setBriefError('Describe a vibe, or tap one of the suggestions.');
       return;
     }
     if (budget === null || budget <= 0) {
-      setError('Enter a budget in naira, like 150,000.');
+      setBriefError('Enter a budget in naira, like 150,000.');
       return;
     }
-    setPhase('working');
-    // The leaning picker arrives with the next UI pass; until then, neutral.
-    const outcome = await arrange({ vibe, leaning: 'neutral', budget, room, catalogue, storage, pricing, capabilities });
+    setStep('plan');
+    setMeasuring(true);
+    setPlanError(null);
+    setSelectedUid(null);
+    const minimum = wait(reducedMotion() ? 200 : 1_400);
+    const outcome = await arrange({
+      vibe: brief.vibe,
+      leaning: brief.leaning ?? 'neutral',
+      budget,
+      room,
+      catalogue,
+      storage,
+      pricing,
+      capabilities,
+    });
+    await minimum;
+    setMeasuring(false);
     if (!outcome.ok) {
-      setError(outcome.message);
-      setPhase('compose');
+      setBriefError(outcome.message);
+      setStep('brief');
       return;
     }
     setArrangement(outcome.arrangement);
-    setSelectedUid(null);
-    setPhase('result');
-    showPlan();
   };
 
   const reroll = () => {
     if (!arrangement) return;
-    setError(null);
-    const outcome = rearrange(arrangement, room);
+    const outcome = rearrange(arrangement);
     if (!outcome.ok) {
-      setError(outcome.message);
+      setPlanError(outcome.message);
       return;
     }
+    setPlanError(null);
+    setSelectedUid(null);
     setArrangement(outcome.arrangement);
-    setSelectedUid(null);
-    showPlan();
   };
 
-  const pay = async () => {
-    if (!arrangement || phase === 'paying') return;
-    setError(null);
-    if (!awaitingSave && arrangement.grandTotal > wallet) {
-      setError(
-        `Not enough in your wallet. You have ${naira(wallet)} and this room costs ${naira(
-          arrangement.grandTotal,
-        )}. Lower the budget and make a new plan.`,
-      );
+  // Doing the job -----------------------------------------------------------------
+
+  const stages: Stage[] = [
+    { label: 'Buying from the shop' },
+    ...(arrangement?.finishes.floor || arrangement?.finishes.wallPaint ? [{ label: 'Painting and laying the floor' }] : []),
+    { label: 'Carrying everything in' },
+    { label: 'Putting each piece in its place' },
+    { label: 'Settling Fixam’s fee' },
+  ];
+
+  const runJob = async (retry?: () => Promise<ExecuteOutcome>) => {
+    if (!arrangement) return;
+    setStep('execute');
+    if (arrangement.mode === 'plan-only') {
+      setJob({ status: 'running', stage: 0 });
+      const [outcome] = await Promise.all([executePlan(game.adapter, arrangement), wait(reducedMotion() ? 0 : 900)]);
+      if (outcome.ok && outcome.mode === 'plan-only') {
+        setJob({ status: 'steps', steps: outcome.steps, done: new Set() });
+        await game.refresh();
+      } else if (!outcome.ok) {
+        setJob({ status: 'failed', stage: 0, message: outcome.message, canRetry: false, charged: outcome.charged });
+      }
       return;
     }
-    setPhase('paying');
-    const retry = awaitingSave ? retryRef.current : null;
-    const outcome = retry ? await retry() : await executePlan(game.adapter, arrangement);
-    if (!outcome.ok) {
+
+    // Full service: walk through the stages while the game does the work.
+    let stage = 0;
+    setJob({ status: 'running', stage });
+    const pace = reducedMotion() ? 150 : 650;
+    let finished = false;
+    const ticker = (async () => {
+      while (!finished && stage < stages.length - 1) {
+        await wait(pace);
+        if (finished) break;
+        stage += 1;
+        setJob((j) => (j.status === 'running' ? { status: 'running', stage } : j));
+      }
+    })();
+    const [outcome] = await Promise.all([retry ? retry() : executePlan(game.adapter, arrangement), wait(pace * stages.length)]);
+    finished = true;
+    await ticker;
+    if (outcome.ok) {
+      retryRef.current = null;
+      setJob({ status: 'running', stage: stages.length });
+      await wait(reducedMotion() ? 0 : 400);
+      setJob({ status: 'fixed' });
+      await game.refresh();
+    } else {
       retryRef.current = outcome.retry ?? null;
-      setAwaitingSave(!!outcome.retry);
-      setError(outcome.message);
-      setPhase('result');
+      setJob({ status: 'failed', stage, message: outcome.message, canRetry: !!outcome.retry, charged: outcome.charged });
+    }
+  };
+
+  const proceed = () => {
+    if (!arrangement) return;
+    const due = arrangement.mode === 'full-service' ? arrangement.grandTotal : arrangement.fee;
+    if (due > wallet) {
+      setPlanError(`Not enough in your wallet. You have ${naira(wallet)} and this costs ${naira(due)}. Lower the budget and make a new plan.`);
       return;
     }
-    retryRef.current = null;
-    setAwaitingSave(false);
-    await game.refresh();
-    setPhase('fixed');
+    setPlanError(null);
+    void runJob();
   };
 
-  const edit = () => {
-    setError(null);
-    setSelectedUid(null);
-    if (phase === 'fixed') setArrangement(null);
-    setPhase('compose');
-  };
+  // Screens -----------------------------------------------------------------------
 
-  const pickPreset = (label: string, suggested: number) => {
-    setVibe(label);
-    if (!budgetTouched) setBudgetText(groupDigits(pricing.scale(suggested)));
-  };
-
-  const onBudgetChange = (value: string) => {
-    setBudgetTouched(true);
-    const digits = value.replace(/\D/g, '').replace(/^0+/, '').slice(0, MAX_BUDGET_DIGITS);
-    setBudgetText(digits ? groupDigits(Number(digits)) : '');
-  };
-
-  const composing = phase === 'compose' || phase === 'working';
-  const showResult = arrangement && !composing;
-  const selectedPick = arrangement?.placed.find((p) => p.uid === selectedUid);
-
-  // Vocabulary: a generated layout is a plan. Only a paid plan is fixed.
-  const fixed = phase === 'fixed';
-  let title = 'Let’s fix your room';
-  let lede: string | null = null;
-  if (composing && arrangement) title = 'Change your plan';
-  if (showResult) {
-    const count = arrangement.placed.length;
-    title = fixed ? 'Fixed' : 'Your plan';
-    lede = fixed
-      ? `Paid ${naira(arrangement.total)}. Everything is in your flat now.`
-      : `${count} ${count === 1 ? 'piece' : 'pieces'} for ${naira(arrangement.total)}. Nothing is charged until you pay.`;
-  }
-
-  const errorNotice = error && (
-    <div className="notice" role="alert">
-      <p>{error}</p>
-    </div>
-  );
-
-  const reading = arrangement?.reading;
-  const caption = selectedPick
-    ? `${selectedPick.item.name} · ${selectedPick.cost === 0 ? 'already yours' : naira(selectedPick.cost)}`
-    : arrangement
-      ? 'Tap a piece to find it on the receipt.'
-      : `${room.widthCells / 2}m by ${room.heightCells / 2}m, one door, one window.`;
-
-  return (
-    <div className="arrange">
-      <div className="arrange-title" ref={planRef}>
-        <h1 className={fixed ? 'is-fixed' : undefined}>{title}</h1>
-        {lede && <p className="lede">{lede}</p>}
-      </div>
-
-      <Room
+  let screen: JSX.Element | null = null;
+  if (step === 'home') {
+    screen = <HomeScreen name={player.name} properties={properties} pricing={pricing} onOpen={openProperty} />;
+  } else if (step === 'rooms' && property) {
+    screen = <RoomsScreen property={property} house={house} error={houseError} onRetry={() => void loadHouse(property)} onPick={pickRoom} />;
+  } else if (step === 'purpose' && baseRoom) {
+    screen = (
+      <PurposeScreen
+        room={baseRoom}
+        chosen={purposeDraft}
+        onChoose={setPurposeDraft}
+        onContinue={() => {
+          if (!purposeDraft) return;
+          setPurposes((p) => ({ ...p, [baseRoom.id]: purposeDraft }));
+          setStep('brief');
+        }}
+      />
+    );
+  } else if (step === 'brief' && room) {
+    screen = (
+      <BriefScreen
         room={room}
-        layout={arrangement?.layout ?? []}
+        brief={brief}
+        wallet={wallet}
+        budget={budget}
+        mode={mode}
+        error={briefError}
+        suggestedBudget={(base) => scaleBudget(base)}
+        onChange={(next) => setBrief((b) => ({ ...b, ...next }))}
+        onSubmit={() => void makePlan()}
+      />
+    );
+  } else if (step === 'plan' && room) {
+    screen = (
+      <PlanScreen
+        room={room}
+        arrangement={arrangement}
+        measuring={measuring}
         items={catalogueById}
-        runKey={arrangement?.seed ?? 'empty'}
         selectedUid={selectedUid}
         onSelect={setSelectedUid}
-        overlay={
-          !arrangement ? (
-            <div className="invite">
-              <p className="invite-title">Start with a vibe</p>
-              <p>Say how you want the room to feel and what you can spend. Fixam plans the room and shows you the bill. Nothing is fixed until you pay.</p>
-            </div>
-          ) : undefined
-        }
+        error={planError}
+        onReroll={reroll}
+        onProceed={proceed}
       />
-      <p className="plan-caption" aria-live="polite">
-        {caption}
-      </p>
+    );
+  } else if (step === 'execute' && room && arrangement) {
+    if (job.status === 'fixed') {
+      screen = <FixedScreen room={room} arrangement={arrangement} items={catalogueById} onDone={() => void goHome()} />;
+    } else if (job.status === 'steps') {
+      screen = (
+        <StepsScreen
+          room={room}
+          arrangement={arrangement}
+          items={catalogueById}
+          steps={job.steps}
+          done={job.done}
+          onToggle={(order) =>
+            setJob((j) => {
+              if (j.status !== 'steps') return j;
+              const done = new Set(j.done);
+              if (done.has(order)) done.delete(order);
+              else done.add(order);
+              return { ...j, done };
+            })
+          }
+          onFinish={() => void goHome()}
+        />
+      );
+    } else {
+      const active = job.status === 'running' || job.status === 'failed' ? job.stage : 0;
+      screen = (
+        <JobScreen
+          room={room}
+          stages={arrangement.mode === 'full-service' ? stages : [{ label: 'Paying for your plan' }, { label: 'Writing out your steps' }]}
+          active={active}
+          failed={job.status === 'failed' ? job.message : null}
+          canRetry={job.status === 'failed' && job.canRetry}
+          onRetry={() => void runJob(retryRef.current ?? undefined)}
+        />
+      );
+    }
+  }
 
-      {composing && (
-        <form className="compose" onSubmit={fix} noValidate>
-          <div className="field">
-            <label htmlFor="vibe">Vibe</label>
-            <input
-              id="vibe"
-              type="text"
-              value={vibe}
-              onChange={(e) => setVibe(e.target.value)}
-              placeholder="soft life Lekki, but cosy"
-              maxLength={120}
-              autoComplete="off"
-              enterKeyHint="go"
-            />
-          </div>
-          <ul className="chips" aria-label="Vibe suggestions">
-            {vibePresets.map((preset) => (
-              <li key={preset.id}>
-                <button
-                  type="button"
-                  className={vibe === preset.label ? 'chip is-on' : 'chip'}
-                  aria-pressed={vibe === preset.label}
-                  onClick={() => pickPreset(preset.label, preset.suggestedBudget)}
-                >
-                  {preset.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-
-          <div className="field">
-            <label htmlFor="budget">Budget</label>
-            <div className="budget-input">
-              <span aria-hidden="true">₦</span>
-              <input
-                id="budget"
-                type="text"
-                inputMode="numeric"
-                value={budgetText}
-                onChange={(e) => onBudgetChange(e.target.value)}
-                placeholder="150,000"
-                autoComplete="off"
-                aria-describedby="budget-hint"
-              />
-            </div>
-            <p id="budget-hint" className={budget !== null && budget > wallet ? 'hint is-warn' : 'hint'}>
-              {budget !== null && budget > wallet
-                ? `That’s more than the ${naira(wallet)} in your wallet. You can plan it, but you’ll need the money to pay.`
-                : `You have ${naira(wallet)} in your wallet.`}
-            </p>
-          </div>
-
-          {errorNotice}
-          <button type="submit" className="button-primary" disabled={phase === 'working'}>
-            {phase === 'working' ? 'Planning…' : 'Fix my room'}
-          </button>
-          {arrangement && (
-            <button type="button" className="button-text" onClick={() => setPhase('result')}>
-              Back to the last plan
-            </button>
-          )}
-        </form>
-      )}
-
-      {showResult && (
-        <>
-          {reading && reading.strongestTags.length > 0 && (
-            <p className="reading">
-              Read as {reading.strongestTags.map((tag) => tagWords[tag] ?? tag).join(', ')}
-              {reading.understood ? '' : ', since the vibe didn’t match anything Fixam knows'}.
-            </p>
-          )}
-          <Receipt
-            arrangement={arrangement}
-            wallet={wallet}
-            paid={fixed}
-            selectedUid={selectedUid}
-            onSelect={setSelectedUid}
-          />
-          {errorNotice}
-          <div className="actions">
-            {!fixed && (
-              <button type="button" className="button-primary" onClick={pay} disabled={phase === 'paying'}>
-                {phase === 'paying' ? 'Paying…' : awaitingSave ? 'Save layout' : `Pay ${naira(arrangement.total)} to fix it`}
-              </button>
-            )}
-            {!fixed && (
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={reroll}
-                disabled={phase === 'paying' || awaitingSave}
-              >
-                Try another layout
-              </button>
-            )}
-            <button type="button" className="button-text" onClick={edit} disabled={phase === 'paying' || awaitingSave}>
-              {fixed ? 'Start a new plan' : 'Change vibe or budget'}
-            </button>
-          </div>
-        </>
-      )}
-    </div>
+  return (
+    <>
+      <Header onBack={back} wallet={wallet} />
+      {screen}
+    </>
   );
 }
